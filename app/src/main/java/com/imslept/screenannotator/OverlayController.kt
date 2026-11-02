@@ -1,25 +1,40 @@
 package com.imslept.screenannotator
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
-import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.PointF
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.annotation.DrawableRes
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -27,7 +42,8 @@ import kotlin.math.min
 /**
  * Gestisce le due finestre sovrapposte alle altre app:
  *  1) la superficie di disegno a schermo intero (trasparente ai tocchi quando il disegno e' spento)
- *  2) la barra degli strumenti flottante, trascinabile e riducibile a bolla.
+ *  2) la barra degli strumenti flottante: trascinabile, con timer di registrazione,
+ *     riducibile a una bolla che si attacca al bordo dello schermo e si nasconde da sola.
  */
 class OverlayController(
     private val ctx: Context,
@@ -35,9 +51,17 @@ class OverlayController(
 ) {
     private companion object {
         const val ORANGE = 0xFFD97757.toInt()
-        const val DARK = 0xE61E1E1C.toInt()
+        const val INK = 0xFF141413.toInt()
         const val PRIMARY = 0xFFFFFFFF.toInt()
         const val MUTED = 0xB3FFFFFF.toInt()
+        const val REC_RED = 0xFFE5484D.toInt()
+
+        /** Misure in dp a scala 100%. */
+        const val BAR_W = 64f
+        const val EST_BAR_H = 790f
+        const val PANEL_W = 252f
+        const val EST_PANEL_H = 480f
+        const val BUBBLE = 58f
 
         /**
          * Da Android 12 i tocchi attraverso un overlay "non toccabile" passano solo se l'opacita'
@@ -53,8 +77,10 @@ class OverlayController(
     }
 
     private val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-    private val u = ctx.resources.displayMetrics.density * Prefs.toolbarScale / 100f
+    private val density = ctx.resources.displayMetrics.density
+    private var u = density * Prefs.toolbarScale / 100f
     private val touchSlop = ViewConfiguration.get(ctx).scaledTouchSlop
+    private val handler = Handler(Looper.getMainLooper())
 
     private val drawingView = DrawingView(ctx)
     private lateinit var drawParams: WindowManager.LayoutParams
@@ -63,15 +89,22 @@ class OverlayController(
     private lateinit var root: LinearLayout
     private lateinit var bar: LinearLayout
     private lateinit var panel: LinearLayout
-    private lateinit var bubble: ImageView
+    private lateinit var bubble: FrameLayout
+    private lateinit var bubbleDisc: ImageView
+    private lateinit var bubbleDot: View
 
+    private lateinit var headerDot: View
+    private lateinit var timerText: TextView
     private val toolButtons = HashMap<Tool, ImageView>()
     private lateinit var drawToggle: LinearLayout
     private lateinit var drawToggleIcon: ImageView
     private lateinit var drawToggleLabel: TextView
-    private lateinit var optionsButton: ImageView
+    private lateinit var styleButton: FrameLayout
+    private lateinit var styleDot: View
 
     private val swatches = ArrayList<View>()
+    private lateinit var panelTitle: TextView
+    private lateinit var preview: StrokePreview
     private lateinit var colorBlock: LinearLayout
     private lateinit var opacityBlock: LinearLayout
     private lateinit var shapeRow: LinearLayout
@@ -82,11 +115,17 @@ class OverlayController(
     private lateinit var opacityLabel: TextView
     private lateinit var tempButton: TextView
     private lateinit var permButton: TextView
+    private lateinit var modeHint: TextView
+
+    private val anims = ArrayList<Animator>()
+    private var startElapsed = 0L
 
     private var drawing = false
     private var expanded = true
     private var panelOpen = false
     private var panelOnLeft = false
+    private var dockedLeft = false
+    private var peeking = false
     private var pendingText: PointF? = null
     private var shown = false
 
@@ -111,23 +150,62 @@ class OverlayController(
     fun show() {
         if (shown) return
         shown = true
+        // Se la barra non entra nello schermo (scala alta) la riduco automaticamente
+        val (_, sh) = screenSize()
+        val maxH = sh * 0.9f
+        if (EST_BAR_H * u > maxH) u = maxH / EST_BAR_H
+
         addDrawingWindow()
         buildToolbar()
         addToolbarWindow()
         drawingView.onTextRequest = { x, y -> requestText(x, y) }
         setDrawing(false)
         selectTool(Prefs.lastTool, enableDrawing = false)
+
+        startElapsed = SystemClock.elapsedRealtime()
+        handler.post(tick)
+        pulse(headerDot)
+        pulse(bubbleDot)
+
+        root.alpha = 0f
+        root.animate().alpha(1f).setDuration(240).start()
     }
 
     fun destroy() {
         if (!shown) return
         shown = false
+        handler.removeCallbacksAndMessages(null)
+        for (a in anims) a.cancel()
+        anims.clear()
         OverlayBridge.textListener = null
+        try { root.animate().cancel() } catch (_: Exception) {}
         try { wm.removeView(root) } catch (_: Exception) {}
         try { wm.removeView(drawingView) } catch (_: Exception) {}
     }
 
     fun toggleDrawing() = setDrawing(!drawing)
+
+    private val tick = object : Runnable {
+        override fun run() {
+            val s = ((SystemClock.elapsedRealtime() - startElapsed) / 1000).toInt()
+            timerText.text = formatTime(s)
+            handler.postDelayed(this, 1000)
+        }
+    }
+
+    private fun formatTime(s: Int): String =
+        if (s >= 3600) String.format(Locale.ROOT, "%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
+        else String.format(Locale.ROOT, "%02d:%02d", s / 60, s % 60)
+
+    private fun pulse(v: View) {
+        val a = ObjectAnimator.ofFloat(v, View.ALPHA, 1f, 0.25f).apply {
+            duration = 750
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.REVERSE
+            start()
+        }
+        anims.add(a)
+    }
 
     // ------------------------------------------------------------------ Finestra di disegno
 
@@ -169,8 +247,10 @@ class OverlayController(
         if (::drawToggle.isInitialized) {
             drawToggleIcon.setImageResource(if (on) R.drawable.ic_pencil else R.drawable.ic_touch)
             drawToggleLabel.text = if (on) "Disegno" else "Tocco"
-            highlight(drawToggle, on)
-            bubble.background = round(if (on) ORANGE else 0xE6555555.toInt(), 22f)
+            select(drawToggle, on)
+            bubbleDisc.setImageResource(if (on) R.drawable.ic_pencil else R.drawable.ic_touch)
+            bubbleDisc.imageTintList = ColorStateList.valueOf(if (on) INK else PRIMARY)
+            bubbleDisc.background = circle(if (on) ORANGE else 0xF2262624.toInt())
         }
     }
 
@@ -187,7 +267,7 @@ class OverlayController(
         )
     }
 
-    // ------------------------------------------------------------------ Barra degli strumenti
+    // ------------------------------------------------------------------ Elementi grafici
 
     private fun round(color: Int, radiusDp: Float): GradientDrawable =
         GradientDrawable().apply {
@@ -195,24 +275,64 @@ class OverlayController(
             cornerRadius = radiusDp * u
         }
 
-    private fun highlight(v: View, on: Boolean) {
-        v.background = if (on) round(ORANGE, 12f) else null
+    private fun circle(color: Int): GradientDrawable =
+        GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(color)
+            setStroke(dp(1f).coerceAtLeast(1), 0x33FFFFFF)
+        }
+
+    /** Sfondo "vetro scuro" con bordo sottile, usato da barra e pannello. */
+    private fun glass(radiusDp: Float): GradientDrawable =
+        GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xF2292927.toInt(), 0xF2151514.toInt())).apply {
+            cornerRadius = radiusDp * u
+            setStroke(dp(1f).coerceAtLeast(1), 0x33FFFFFF)
+        }
+
+    private fun applyInk(v: View, ink: Int) {
+        when (v) {
+            is ImageView -> v.imageTintList = ColorStateList.valueOf(ink)
+            is TextView -> v.setTextColor(ink)
+            is ViewGroup -> for (i in 0 until v.childCount) applyInk(v.getChildAt(i), ink)
+        }
     }
 
-    private fun iconButton(@DrawableRes res: Int, color: Int = PRIMARY, onClick: () -> Unit): ImageView =
+    /** Stato "selezionato": riquadro arancione con contenuto scuro. */
+    private fun select(v: View, on: Boolean, radiusDp: Float = 16f) {
+        v.background = if (on) round(ORANGE, radiusDp) else null
+        applyInk(v, if (on) INK else PRIMARY)
+    }
+
+    private fun pop(v: View) {
+        v.animate().cancel()
+        v.animate().scaleX(0.86f).scaleY(0.86f).setDuration(70).withEndAction {
+            v.animate().scaleX(1f).scaleY(1f).setDuration(120).setInterpolator(OvershootInterpolator(2f)).start()
+        }.start()
+    }
+
+    private fun iconButton(
+        @DrawableRes res: Int,
+        color: Int = PRIMARY,
+        wDp: Float = 52f,
+        hDp: Float = 48f,
+        onClick: () -> Unit,
+    ): ImageView =
         ImageView(ctx).apply {
             setImageResource(res)
             imageTintList = ColorStateList.valueOf(color)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
-            val p = dp(9f)
+            val p = dp(11f)
             setPadding(p, p, p, p)
-            layoutParams = LinearLayout.LayoutParams(dp(40f), dp(38f)).apply { setMargins(0, dp(1f), 0, dp(1f)) }
-            setOnClickListener { onClick() }
+            layoutParams = LinearLayout.LayoutParams(dp(wDp), dp(hDp)).apply { setMargins(0, dp(1f), 0, dp(1f)) }
+            setOnClickListener {
+                pop(this)
+                onClick()
+            }
         }
 
     private fun divider(): View = View(ctx).apply {
-        setBackgroundColor(0x33FFFFFF)
-        layoutParams = LinearLayout.LayoutParams(dp(24f), dp(1f)).apply {
+        setBackgroundColor(0x26FFFFFF)
+        layoutParams = LinearLayout.LayoutParams(dp(30f), dp(1f).coerceAtLeast(1)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
             setMargins(0, dp(4f), 0, dp(4f))
         }
@@ -223,43 +343,95 @@ class OverlayController(
         setTextColor(MUTED)
         setTextSize(TypedValue.COMPLEX_UNIT_PX, 11f * u)
         letterSpacing = 0.08f
-        setPadding(0, dp(10f), 0, dp(3f))
+        setPadding(0, dp(14f), 0, dp(4f))
     }
 
+    private fun toolName(t: Tool): String = when (t) {
+        Tool.PEN -> "Penna"
+        Tool.PENCIL -> "Matita"
+        Tool.HIGHLIGHTER -> "Evidenziatore"
+        Tool.TEXT -> "Testo"
+        Tool.SHAPE -> "Forme"
+        Tool.ERASER -> "Gomma"
+    }
+
+    // ------------------------------------------------------------------ Barra degli strumenti
+
     private fun buildToolbar() {
-        // --- colonna di strumenti
         bar = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            background = round(DARK, 22f)
-            setPadding(dp(2f), dp(4f), dp(2f), dp(4f))
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = glass(30f)
+            setPadding(dp(6f), dp(6f), dp(6f), dp(10f))
         }
-        val handle = iconButton(R.drawable.ic_drag, MUTED) {}
-        attachDrag(handle)
-        bar.addView(handle)
+
+        // --- testata: maniglia + timer (si trascina da qui)
+        val grip = View(ctx).apply {
+            background = round(0x66FFFFFF, 3f)
+            layoutParams = LinearLayout.LayoutParams(dp(30f), dp(5f)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                setMargins(0, dp(4f), 0, dp(8f))
+            }
+        }
+        headerDot = View(ctx).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(REC_RED)
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(8f), dp(8f)).apply { setMargins(0, 0, dp(5f), 0) }
+        }
+        timerText = TextView(ctx).apply {
+            text = "00:00"
+            maxLines = 1
+            setTextColor(PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_PX, 12f * u)
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        val timerRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            addView(headerDot)
+            addView(timerText)
+        }
+        val header = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, 0, 0, dp(6f))
+            addView(grip)
+            addView(timerRow)
+        }
+        attachDrag(header)
+        bar.addView(header, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         bar.addView(divider())
 
+        // --- Tocco / Disegno
         drawToggleIcon = ImageView(ctx).apply {
             setImageResource(R.drawable.ic_touch)
             imageTintList = ColorStateList.valueOf(PRIMARY)
-            layoutParams = LinearLayout.LayoutParams(dp(24f), dp(24f))
+            layoutParams = LinearLayout.LayoutParams(dp(26f), dp(26f))
         }
         drawToggleLabel = TextView(ctx).apply {
             text = "Tocco"
             setTextColor(PRIMARY)
-            setTextSize(TypedValue.COMPLEX_UNIT_PX, 9f * u)
+            setTextSize(TypedValue.COMPLEX_UNIT_PX, 10f * u)
+            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
         }
         drawToggle = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(dp(40f), dp(48f))
+            layoutParams = LinearLayout.LayoutParams(dp(52f), dp(58f)).apply { setMargins(0, dp(2f), 0, dp(2f)) }
             addView(drawToggleIcon)
             addView(drawToggleLabel)
-            setOnClickListener { toggleDrawing() }
+            setOnClickListener {
+                pop(this)
+                toggleDrawing()
+            }
         }
         bar.addView(drawToggle)
         bar.addView(divider())
 
+        // --- strumenti
         val tools = listOf(
             Tool.PEN to R.drawable.ic_pen,
             Tool.PENCIL to R.drawable.ic_pencil,
@@ -274,28 +446,71 @@ class OverlayController(
             bar.addView(b)
         }
         bar.addView(divider())
+
+        // --- colore/stile (apre il pannello) + annulla/ripeti/cancella
+        styleDot = View(ctx).apply {
+            layoutParams = FrameLayout.LayoutParams(dp(28f), dp(28f), Gravity.CENTER)
+        }
+        styleButton = FrameLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(52f), dp(48f)).apply { setMargins(0, dp(1f), 0, dp(1f)) }
+            addView(styleDot)
+            setOnClickListener {
+                pop(this)
+                togglePanel()
+            }
+        }
+        bar.addView(styleButton)
         bar.addView(iconButton(R.drawable.ic_undo) { drawingView.undo() })
         bar.addView(iconButton(R.drawable.ic_redo) { drawingView.redo() })
         bar.addView(iconButton(R.drawable.ic_delete) { drawingView.clearAll() })
         bar.addView(divider())
-        optionsButton = iconButton(R.drawable.ic_settings) { togglePanel() }
-        bar.addView(optionsButton)
+
+        // --- nascondi + stop
         bar.addView(iconButton(R.drawable.ic_minimize) { setExpanded(false) })
-        bar.addView(iconButton(R.drawable.ic_stop, 0xFFFF6B6B.toInt()) { onStopRequested() })
+        val stop = ImageView(ctx).apply {
+            setImageResource(R.drawable.ic_stop)
+            imageTintList = ColorStateList.valueOf(PRIMARY)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            val p = dp(14f)
+            setPadding(p, p, p, p)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(REC_RED)
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(48f), dp(48f)).apply { setMargins(0, dp(6f), 0, dp(2f)) }
+            setOnClickListener {
+                pop(this)
+                onStopRequested()
+            }
+        }
+        bar.addView(stop)
 
         buildPanel()
 
-        // --- bolla (barra ridotta)
-        bubble = ImageView(ctx).apply {
-            setImageResource(R.drawable.ic_pencil)
+        // --- bolla (barra nascosta)
+        bubbleDisc = ImageView(ctx).apply {
+            setImageResource(R.drawable.ic_touch)
             imageTintList = ColorStateList.valueOf(PRIMARY)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
-            val p = dp(11f)
+            val p = dp(15f)
             setPadding(p, p, p, p)
-            layoutParams = LinearLayout.LayoutParams(dp(44f), dp(44f))
-            background = round(0xE6555555.toInt(), 22f)
+            background = circle(0xF2262624.toInt())
+            layoutParams = FrameLayout.LayoutParams(dp(BUBBLE), dp(BUBBLE))
         }
-        attachDrag(bubble) { setExpanded(true) }
+        bubbleDot = View(ctx).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(REC_RED)
+                setStroke(dp(2f).coerceAtLeast(1), 0xFF151514.toInt())
+            }
+        }
+        bubble = FrameLayout(ctx).apply {
+            addView(bubbleDisc)
+            addView(bubbleDot, FrameLayout.LayoutParams(dp(16f), dp(16f), Gravity.TOP or Gravity.END).apply {
+                setMargins(0, dp(1f), dp(1f), 0)
+            })
+        }
+        attachDrag(bubble, onClick = { setExpanded(true) }, onDrop = { snapBubble() })
 
         root = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -307,10 +522,23 @@ class OverlayController(
     private fun buildPanel() {
         panel = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            background = round(DARK, 22f)
-            setPadding(dp(14f), dp(8f), dp(14f), dp(12f))
-            layoutParams = LinearLayout.LayoutParams(dp(220f), LinearLayout.LayoutParams.WRAP_CONTENT)
+            background = glass(26f)
+            setPadding(dp(16f), dp(14f), dp(16f), dp(16f))
+            layoutParams = LinearLayout.LayoutParams(dp(PANEL_W), LinearLayout.LayoutParams.WRAP_CONTENT)
         }
+
+        panelTitle = TextView(ctx).apply {
+            setTextColor(PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_PX, 17f * u)
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        panel.addView(panelTitle)
+
+        // Anteprima del tratto
+        preview = StrokePreview(ctx)
+        panel.addView(preview, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(64f)).apply {
+            topMargin = dp(10f)
+        })
 
         // Colore
         colorBlock = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
@@ -320,8 +548,8 @@ class OverlayController(
             for (i in rowStart until rowStart + 6) {
                 val color = PALETTE[i]
                 val sw = View(ctx).apply {
-                    layoutParams = LinearLayout.LayoutParams(dp(28f), dp(28f)).apply {
-                        setMargins(dp(2f), dp(2f), dp(2f), dp(2f))
+                    layoutParams = LinearLayout.LayoutParams(dp(30f), dp(30f)).apply {
+                        setMargins(dp(3f), dp(3f), dp(3f), dp(3f))
                     }
                     tag = color
                     setOnClickListener {
@@ -345,7 +573,7 @@ class OverlayController(
             ShapeType.LINE to R.drawable.ic_line, ShapeType.RECT to R.drawable.ic_rect,
         )
         for ((type, res) in shapes) {
-            val b = iconButton(res) {
+            val b = iconButton(res, wDp = 48f, hDp = 44f) {
                 Prefs.shapeType = type
                 refreshShapes()
             }
@@ -379,7 +607,11 @@ class OverlayController(
 
         // Modalita' temporanea / permanente
         panel.addView(label("Modalità"))
-        val modeRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val seg = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = round(0x26FFFFFF, 16f)
+            setPadding(dp(3f), dp(3f), dp(3f), dp(3f))
+        }
         tempButton = modeButton("Temporanea") {
             drawingView.temporary = true
             refreshMode()
@@ -388,23 +620,30 @@ class OverlayController(
             drawingView.temporary = false
             refreshMode()
         }
-        modeRow.addView(tempButton)
-        modeRow.addView(permButton)
-        panel.addView(modeRow)
+        seg.addView(tempButton)
+        seg.addView(permButton)
+        panel.addView(seg)
+        modeHint = TextView(ctx).apply {
+            setTextColor(MUTED)
+            setTextSize(TypedValue.COMPLEX_UNIT_PX, 11f * u)
+            setPadding(dp(2f), dp(6f), 0, 0)
+        }
+        panel.addView(modeHint)
     }
 
     private fun modeButton(text: String, onClick: () -> Unit): TextView = TextView(ctx).apply {
         this.text = text
         gravity = Gravity.CENTER
         setTextColor(PRIMARY)
-        setTextSize(TypedValue.COMPLEX_UNIT_PX, 12f * u)
-        layoutParams = LinearLayout.LayoutParams(0, dp(34f), 1f).apply { setMargins(dp(2f), 0, dp(2f), 0) }
+        typeface = Typeface.DEFAULT_BOLD
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, 12.5f * u)
+        layoutParams = LinearLayout.LayoutParams(0, dp(40f), 1f)
         setOnClickListener { onClick() }
     }
 
     private fun seekBar(onChange: (Int) -> Unit): SeekBar = SeekBar(ctx).apply {
-        progressTintList = android.content.res.ColorStateList.valueOf(ORANGE)
-        thumbTintList = android.content.res.ColorStateList.valueOf(ORANGE)
+        progressTintList = ColorStateList.valueOf(ORANGE)
+        thumbTintList = ColorStateList.valueOf(ORANGE)
         setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(s: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) onChange(progress)
@@ -422,11 +661,59 @@ class OverlayController(
         else -> Pair(1, 30)
     }
 
+    /** Anteprima di come verra' il tratto con colore, spessore e opacita' correnti. */
+    private inner class StrokePreview(c: Context) : View(c) {
+        private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val path = Path()
+
+        init {
+            background = round(0xFF4A4A47.toInt(), 16f)
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val t = Prefs.lastTool
+            val w = width.toFloat()
+            val h = height.toFloat()
+            val maxW = h * 0.7f
+            val sw = (Prefs.width(t) * density).coerceIn(2f, maxW)
+            val alpha = (Prefs.opacity(t).coerceIn(10, 100) * 255 / 100)
+            val color = (Prefs.color(t) and 0x00FFFFFF) or (alpha shl 24)
+            when (t) {
+                Tool.ERASER -> {
+                    p.style = Paint.Style.STROKE
+                    p.strokeWidth = 2f * density
+                    p.color = PRIMARY
+                    canvas.drawCircle(w / 2f, h / 2f, sw / 2f, p)
+                }
+                Tool.TEXT -> {
+                    p.style = Paint.Style.FILL
+                    p.color = color
+                    p.textAlign = Paint.Align.CENTER
+                    p.typeface = Typeface.DEFAULT_BOLD
+                    p.textSize = min(sw * 1.4f, h * 0.8f)
+                    canvas.drawText("Aa", w / 2f, h / 2f + p.textSize * 0.35f, p)
+                }
+                else -> {
+                    p.style = Paint.Style.STROKE
+                    p.strokeCap = Paint.Cap.ROUND
+                    p.strokeWidth = sw
+                    p.color = color
+                    path.reset()
+                    val pad = max(sw, 16f * density)
+                    path.moveTo(pad, h * 0.62f)
+                    path.cubicTo(w * 0.35f, h * 0.15f, w * 0.6f, h * 0.95f, w - pad, h * 0.38f)
+                    canvas.drawPath(path, p)
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ Stato della barra
 
     private fun selectTool(tool: Tool, enableDrawing: Boolean) {
         Prefs.lastTool = tool
-        for ((t, b) in toolButtons) highlight(b, t == tool)
+        for ((t, b) in toolButtons) select(b, t == tool)
         if (enableDrawing && !drawing) setDrawing(true)
         refreshPanel()
     }
@@ -434,6 +721,7 @@ class OverlayController(
     private fun refreshPanel() {
         val t = Prefs.lastTool
         val eraser = t == Tool.ERASER
+        panelTitle.text = toolName(t)
         colorBlock.visibility = if (eraser) View.GONE else View.VISIBLE
         opacityBlock.visibility = if (eraser) View.GONE else View.VISIBLE
         shapeRow.visibility = if (t == Tool.SHAPE) View.VISIBLE else View.GONE
@@ -450,12 +738,14 @@ class OverlayController(
 
     private fun updateLabels() {
         val t = Prefs.lastTool
-        widthLabel.text = (if (t == Tool.TEXT) "Dimensione: " else "Spessore: ") + Prefs.width(t)
-        opacityLabel.text = "Opacità: " + Prefs.opacity(t) + "%"
+        widthLabel.text = ((if (t == Tool.TEXT) "Dimensione  " else "Spessore  ") + Prefs.width(t)).uppercase()
+        opacityLabel.text = ("Opacità  " + Prefs.opacity(t) + "%").uppercase()
+        preview.invalidate()
     }
 
     private fun refreshSwatches() {
-        val selected = Prefs.color(Prefs.lastTool)
+        val t = Prefs.lastTool
+        val selected = Prefs.color(t)
         for (sw in swatches) {
             val c = sw.tag as Int
             val on = c == selected
@@ -465,15 +755,28 @@ class OverlayController(
                 setStroke(if (on) dp(3f) else dp(1f), if (on) ORANGE else 0x66FFFFFF)
             }
         }
+        // Pallino del colore sul pulsante "stile"
+        styleDot.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            if (t == Tool.ERASER) {
+                setColor(0x33FFFFFF)
+                setStroke(dp(2f), PRIMARY)
+            } else {
+                setColor(selected)
+                setStroke(dp(2.5f), PRIMARY)
+            }
+        }
+        preview.invalidate()
     }
 
     private fun refreshShapes() {
-        for ((type, b) in shapeButtons) highlight(b, type == Prefs.shapeType)
+        for ((type, b) in shapeButtons) select(b, type == Prefs.shapeType)
     }
 
     private fun refreshMode() {
-        highlight(tempButton, drawingView.temporary)
-        highlight(permButton, !drawingView.temporary)
+        select(tempButton, drawingView.temporary, 13f)
+        select(permButton, !drawingView.temporary, 13f)
+        modeHint.text = if (drawingView.temporary) "I disegni svaniscono da soli" else "I disegni restano finché non li cancelli"
     }
 
     // ------------------------------------------------------------------ Layout e posizione
@@ -484,7 +787,7 @@ class OverlayController(
             root.addView(bubble)
             return
         }
-        val gap = dp(6f)
+        val gap = dp(8f)
         if (panelOpen && panelOnLeft) {
             root.addView(panel)
             (panel.layoutParams as LinearLayout.LayoutParams).setMargins(0, 0, gap, 0)
@@ -502,36 +805,66 @@ class OverlayController(
     }
 
     private fun togglePanel() {
-        val (sw, _) = screenSize()
-        val extra = dp(220f) + dp(6f)
+        val (sw, sh) = screenSize()
+        val barW = dp(BAR_W)
+        val extra = dp(PANEL_W) + dp(8f)
         if (!panelOpen) {
-            panelOnLeft = barParams.x + dp(44f) / 2 > sw / 2
+            panelOnLeft = barParams.x + barW / 2 > sw / 2
             panelOpen = true
             if (panelOnLeft) barParams.x -= extra
+            else barParams.x = min(barParams.x, sw - barW - extra)
+            barParams.y = barParams.y.coerceIn(0, max(0, sh - dp(EST_PANEL_H)))
             refreshPanel()
         } else {
             panelOpen = false
             if (panelOnLeft) barParams.x += extra
         }
-        highlight(optionsButton, panelOpen)
-        barParams.x = barParams.x.coerceIn(0, max(0, sw - dp(44f)))
+        styleButton.background = if (panelOpen) round(0x33FFFFFF, 16f) else null
+        barParams.x = barParams.x.coerceIn(0, max(0, sw - barW))
         updateBar()
     }
 
+    /** Mostra la barra completa (true) oppure la riduce a una bolla (false), con una piccola animazione. */
     private fun setExpanded(value: Boolean) {
         if (!value && panelOpen) togglePanel()
-        expanded = value
-        updateBar()
+        handler.removeCallbacks(peekRun)
+        peeking = false
+        root.animate().cancel()
+        root.animate().alpha(0f).scaleX(0.8f).scaleY(0.8f).setDuration(100).withEndAction {
+            if (!shown) return@withEndAction
+            val (sw, sh) = screenSize()
+            if (value) {
+                expanded = true
+                val margin = dp(10f)
+                barParams.x = if (dockedLeft) margin else sw - dp(BAR_W) - margin
+                val maxY = max(dp(24f), sh - dp(EST_BAR_H) - dp(24f))
+                barParams.y = barParams.y.coerceIn(dp(24f), maxY)
+            } else {
+                expanded = false
+                val size = dp(BUBBLE)
+                dockedLeft = barParams.x + dp(BAR_W) / 2 < sw / 2
+                barParams.x = if (dockedLeft) dp(6f) else sw - size - dp(6f)
+                barParams.y = barParams.y + dp(10f)
+            }
+            updateBar()
+            root.scaleX = 0.8f
+            root.scaleY = 0.8f
+            root.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(170)
+                .setInterpolator(OvershootInterpolator(1.1f))
+                .withEndAction { if (!expanded) schedulePeek() }
+                .start()
+        }.start()
     }
 
     private fun addToolbarWindow() {
         val (sw, sh) = screenSize()
-        val margin = dp(12f)
-        val barW = dp(44f)
-        val barH = dp(8f) + dp(40f) * 12 + dp(48f) + dp(40f)
+        val margin = dp(10f)
+        val barW = dp(BAR_W)
+        val barH = dp(EST_BAR_H)
         val corner = Prefs.toolbarCorner
-        val x = if (corner == 1 || corner == 3) sw - barW - margin else margin
-        val y = if (corner >= 2) max(margin, sh - barH - dp(90f)) else dp(70f)
+        dockedLeft = !(corner == 1 || corner == 3)
+        val x = if (dockedLeft) margin else sw - barW - margin
+        val y = if (corner >= 2) max(margin, sh - barH - dp(60f)) else dp(60f)
         barParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -550,8 +883,69 @@ class OverlayController(
         wm.addView(root, barParams)
     }
 
+    // ------------------------------------------------------------------ Bolla: aggancio al bordo e "sbirciata"
+
+    private val peekRun = Runnable {
+        if (!shown || expanded) return@Runnable
+        val (sw, _) = screenSize()
+        val size = dp(BUBBLE)
+        val tx = if (dockedLeft) -(size * 0.45f).toInt() else sw - (size * 0.55f).toInt()
+        peeking = true
+        animateTo(tx, barParams.y)
+        root.animate().alpha(0.6f).setDuration(220).start()
+    }
+
+    private fun schedulePeek() {
+        handler.removeCallbacks(peekRun)
+        handler.postDelayed(peekRun, 2500)
+    }
+
+    /** Sveglia la bolla se e' mezza nascosta oltre il bordo. */
+    private fun wake() {
+        handler.removeCallbacks(peekRun)
+        if (!peeking) return
+        peeking = false
+        val (sw, _) = screenSize()
+        val size = dp(BUBBLE)
+        val tx = if (dockedLeft) dp(6f) else sw - size - dp(6f)
+        animateTo(tx, barParams.y)
+        root.animate().alpha(1f).setDuration(150).start()
+    }
+
+    private fun snapBubble() {
+        val (sw, sh) = screenSize()
+        val size = dp(BUBBLE)
+        dockedLeft = barParams.x + size / 2 < sw / 2
+        val tx = if (dockedLeft) dp(6f) else sw - size - dp(6f)
+        val top = dp(24f)
+        val ty = barParams.y.coerceIn(top, max(top, sh - size - top))
+        animateTo(tx, ty) { schedulePeek() }
+    }
+
+    private fun animateTo(tx: Int, ty: Int, end: (() -> Unit)? = null) {
+        val sx = barParams.x
+        val sy = barParams.y
+        val a = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 220
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { va ->
+                val f = va.animatedValue as Float
+                barParams.x = (sx + (tx - sx) * f).toInt()
+                barParams.y = (sy + (ty - sy) * f).toInt()
+                try { wm.updateViewLayout(root, barParams) } catch (_: Exception) {}
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    end?.invoke()
+                }
+            })
+        }
+        anims.add(a)
+        a.start()
+    }
+
     /** Trascinamento della barra (o della bolla) con soglia per distinguere tocco e spostamento. */
-    private fun attachDrag(handle: View, onClick: (() -> Unit)? = null) {
+    private fun attachDrag(handle: View, onClick: (() -> Unit)? = null, onDrop: (() -> Unit)? = null) {
         var startX = 0
         var startY = 0
         var downX = 0f
@@ -560,6 +954,7 @@ class OverlayController(
         handle.setOnTouchListener { _, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    wake()
                     startX = barParams.x
                     startY = barParams.y
                     downX = e.rawX
@@ -577,7 +972,8 @@ class OverlayController(
                         try { wm.updateViewLayout(root, barParams) } catch (_: Exception) {}
                     }
                 }
-                MotionEvent.ACTION_UP -> if (!moved) onClick?.invoke()
+                MotionEvent.ACTION_UP -> if (!moved) onClick?.invoke() else onDrop?.invoke()
+                MotionEvent.ACTION_CANCEL -> if (moved) onDrop?.invoke()
             }
             true
         }
