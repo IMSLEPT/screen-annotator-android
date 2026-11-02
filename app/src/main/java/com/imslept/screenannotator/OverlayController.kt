@@ -2,6 +2,7 @@ package com.imslept.screenannotator
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.PointF
@@ -14,9 +15,11 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import androidx.annotation.DrawableRes
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -60,17 +63,19 @@ class OverlayController(
     private lateinit var root: LinearLayout
     private lateinit var bar: LinearLayout
     private lateinit var panel: LinearLayout
-    private lateinit var bubble: TextView
+    private lateinit var bubble: ImageView
 
-    private val toolButtons = HashMap<Tool, TextView>()
-    private lateinit var drawToggle: TextView
-    private lateinit var optionsButton: TextView
+    private val toolButtons = HashMap<Tool, ImageView>()
+    private lateinit var drawToggle: LinearLayout
+    private lateinit var drawToggleIcon: ImageView
+    private lateinit var drawToggleLabel: TextView
+    private lateinit var optionsButton: ImageView
 
     private val swatches = ArrayList<View>()
     private lateinit var colorBlock: LinearLayout
     private lateinit var opacityBlock: LinearLayout
     private lateinit var shapeRow: LinearLayout
-    private val shapeButtons = HashMap<ShapeType, TextView>()
+    private val shapeButtons = HashMap<ShapeType, ImageView>()
     private lateinit var widthSeek: SeekBar
     private lateinit var widthLabel: TextView
     private lateinit var opacitySeek: SeekBar
@@ -162,7 +167,8 @@ class OverlayController(
         drawParams.flags = drawFlags(touchable = on)
         try { wm.updateViewLayout(drawingView, drawParams) } catch (_: Exception) {}
         if (::drawToggle.isInitialized) {
-            drawToggle.text = if (on) "✍︎" else "☝︎"
+            drawToggleIcon.setImageResource(if (on) R.drawable.ic_pencil else R.drawable.ic_touch)
+            drawToggleLabel.text = if (on) "Disegno" else "Tocco"
             highlight(drawToggle, on)
             bubble.background = round(if (on) ORANGE else 0xE6555555.toInt(), 22f)
         }
@@ -189,25 +195,35 @@ class OverlayController(
             cornerRadius = radiusDp * u
         }
 
-    private fun highlight(v: TextView, on: Boolean) {
+    private fun highlight(v: View, on: Boolean) {
         v.background = if (on) round(ORANGE, 12f) else null
     }
 
-    private fun iconButton(glyph: String, color: Int = PRIMARY, onClick: () -> Unit): TextView =
-        TextView(ctx).apply {
-            text = glyph
-            gravity = Gravity.CENTER
-            setTextColor(color)
-            setTextSize(TypedValue.COMPLEX_UNIT_PX, 19f * u)
-            layoutParams = LinearLayout.LayoutParams(dp(40f), dp(38f))
+    private fun iconButton(@DrawableRes res: Int, color: Int = PRIMARY, onClick: () -> Unit): ImageView =
+        ImageView(ctx).apply {
+            setImageResource(res)
+            imageTintList = ColorStateList.valueOf(color)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            val p = dp(9f)
+            setPadding(p, p, p, p)
+            layoutParams = LinearLayout.LayoutParams(dp(40f), dp(38f)).apply { setMargins(0, dp(1f), 0, dp(1f)) }
             setOnClickListener { onClick() }
         }
 
+    private fun divider(): View = View(ctx).apply {
+        setBackgroundColor(0x33FFFFFF)
+        layoutParams = LinearLayout.LayoutParams(dp(24f), dp(1f)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setMargins(0, dp(4f), 0, dp(4f))
+        }
+    }
+
     private fun label(text: String): TextView = TextView(ctx).apply {
-        this.text = text
+        this.text = text.uppercase()
         setTextColor(MUTED)
         setTextSize(TypedValue.COMPLEX_UNIT_PX, 11f * u)
-        setPadding(0, dp(8f), 0, dp(2f))
+        letterSpacing = 0.08f
+        setPadding(0, dp(10f), 0, dp(3f))
     }
 
     private fun buildToolbar() {
@@ -217,42 +233,65 @@ class OverlayController(
             background = round(DARK, 22f)
             setPadding(dp(2f), dp(4f), dp(2f), dp(4f))
         }
-        val handle = iconButton("≡", MUTED) {}
+        val handle = iconButton(R.drawable.ic_drag, MUTED) {}
         attachDrag(handle)
         bar.addView(handle)
+        bar.addView(divider())
 
-        drawToggle = iconButton("☝︎") { toggleDrawing() }
+        drawToggleIcon = ImageView(ctx).apply {
+            setImageResource(R.drawable.ic_touch)
+            imageTintList = ColorStateList.valueOf(PRIMARY)
+            layoutParams = LinearLayout.LayoutParams(dp(24f), dp(24f))
+        }
+        drawToggleLabel = TextView(ctx).apply {
+            text = "Tocco"
+            setTextColor(PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_PX, 9f * u)
+            gravity = Gravity.CENTER
+        }
+        drawToggle = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(40f), dp(48f))
+            addView(drawToggleIcon)
+            addView(drawToggleLabel)
+            setOnClickListener { toggleDrawing() }
+        }
         bar.addView(drawToggle)
+        bar.addView(divider())
 
         val tools = listOf(
-            Tool.PEN to "✒︎",
-            Tool.PENCIL to "✎︎",
-            Tool.HIGHLIGHTER to "▬",
-            Tool.TEXT to "T",
-            Tool.SHAPE to "◯",
-            Tool.ERASER to "⌫",
+            Tool.PEN to R.drawable.ic_pen,
+            Tool.PENCIL to R.drawable.ic_pencil,
+            Tool.HIGHLIGHTER to R.drawable.ic_highlighter,
+            Tool.TEXT to R.drawable.ic_text,
+            Tool.SHAPE to R.drawable.ic_shape,
+            Tool.ERASER to R.drawable.ic_eraser,
         )
-        for ((tool, glyph) in tools) {
-            val b = iconButton(glyph) { selectTool(tool, enableDrawing = true) }
+        for ((tool, res) in tools) {
+            val b = iconButton(res) { selectTool(tool, enableDrawing = true) }
             toolButtons[tool] = b
             bar.addView(b)
         }
-        bar.addView(iconButton("↶") { drawingView.undo() })
-        bar.addView(iconButton("↷") { drawingView.redo() })
-        bar.addView(iconButton("🗑") { drawingView.clearAll() })
-        optionsButton = iconButton("⚙︎") { togglePanel() }
+        bar.addView(divider())
+        bar.addView(iconButton(R.drawable.ic_undo) { drawingView.undo() })
+        bar.addView(iconButton(R.drawable.ic_redo) { drawingView.redo() })
+        bar.addView(iconButton(R.drawable.ic_delete) { drawingView.clearAll() })
+        bar.addView(divider())
+        optionsButton = iconButton(R.drawable.ic_settings) { togglePanel() }
         bar.addView(optionsButton)
-        bar.addView(iconButton("—") { setExpanded(false) })
-        bar.addView(iconButton("■", 0xFFFF5252.toInt()) { onStopRequested() })
+        bar.addView(iconButton(R.drawable.ic_minimize) { setExpanded(false) })
+        bar.addView(iconButton(R.drawable.ic_stop, 0xFFFF6B6B.toInt()) { onStopRequested() })
 
         buildPanel()
 
         // --- bolla (barra ridotta)
-        bubble = TextView(ctx).apply {
-            text = "✎︎"
-            gravity = Gravity.CENTER
-            setTextColor(PRIMARY)
-            setTextSize(TypedValue.COMPLEX_UNIT_PX, 20f * u)
+        bubble = ImageView(ctx).apply {
+            setImageResource(R.drawable.ic_pencil)
+            imageTintList = ColorStateList.valueOf(PRIMARY)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            val p = dp(11f)
+            setPadding(p, p, p, p)
             layoutParams = LinearLayout.LayoutParams(dp(44f), dp(44f))
             background = round(0xE6555555.toInt(), 22f)
         }
@@ -302,10 +341,11 @@ class OverlayController(
         shapeRow.addView(label("Forma"))
         val shapesLine = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
         val shapes = listOf(
-            ShapeType.CIRCLE to "◯", ShapeType.ARROW to "➚", ShapeType.LINE to "╱", ShapeType.RECT to "▭"
+            ShapeType.CIRCLE to R.drawable.ic_circle, ShapeType.ARROW to R.drawable.ic_arrow,
+            ShapeType.LINE to R.drawable.ic_line, ShapeType.RECT to R.drawable.ic_rect,
         )
-        for ((type, glyph) in shapes) {
-            val b = iconButton(glyph) {
+        for ((type, res) in shapes) {
+            val b = iconButton(res) {
                 Prefs.shapeType = type
                 refreshShapes()
             }
@@ -340,11 +380,11 @@ class OverlayController(
         // Modalita' temporanea / permanente
         panel.addView(label("Modalità"))
         val modeRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-        tempButton = modeButton("⏱ Temporanea") {
+        tempButton = modeButton("Temporanea") {
             drawingView.temporary = true
             refreshMode()
         }
-        permButton = modeButton("∞ Permanente") {
+        permButton = modeButton("Permanente") {
             drawingView.temporary = false
             refreshMode()
         }
@@ -488,7 +528,7 @@ class OverlayController(
         val (sw, sh) = screenSize()
         val margin = dp(12f)
         val barW = dp(44f)
-        val barH = dp(4f) * 2 + dp(38f) * 13
+        val barH = dp(8f) + dp(40f) * 12 + dp(48f) + dp(40f)
         val corner = Prefs.toolbarCorner
         val x = if (corner == 1 || corner == 3) sw - barW - margin else margin
         val y = if (corner >= 2) max(margin, sh - barH - dp(90f)) else dp(70f)

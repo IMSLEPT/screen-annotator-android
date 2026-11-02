@@ -1,5 +1,6 @@
 package com.imslept.screenannotator
 
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.View
@@ -9,8 +10,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.google.android.material.card.MaterialCardView
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -25,18 +28,21 @@ class SettingsActivity : AppCompatActivity() {
         0xFFFFFFFF.toInt(), 0xFF9E9E9E.toInt(), 0xFF212121.toInt(), 0xFF000000.toInt(),
     )
 
+    private lateinit var root: LinearLayout
     private lateinit var column: LinearLayout
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        column = LinearLayout(this).apply {
+        root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(24), dp(20), dp(32))
+            setPadding(dp(20), dp(16), dp(20), dp(32))
         }
+        column = root
         val scroll = ScrollView(this).apply {
-            addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            setBackgroundColor(ContextCompat.getColor(context, R.color.bg))
+            addView(root, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         setContentView(scroll)
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { v, insets ->
@@ -48,7 +54,7 @@ class SettingsActivity : AppCompatActivity() {
         title(getString(R.string.settings), com.google.android.material.R.style.TextAppearance_Material3_HeadlineMedium, 0)
 
         // ---------------- Registrazione
-        title("Registrazione", com.google.android.material.R.style.TextAppearance_Material3_TitleLarge, 24)
+        section("Registrazione")
         label("Risoluzione (lato corto)")
         chips(listOf("Nativa" to 0, "1440p" to 1440, "1080p" to 1080, "720p" to 720), Prefs.resolution) { Prefs.resolution = it }
         label("Fotogrammi al secondo")
@@ -67,7 +73,7 @@ class SettingsActivity : AppCompatActivity() {
         column.addView(touches, params().apply { topMargin = dp(12) })
 
         // ---------------- Scia a scomparsa
-        title("Scia a scomparsa", com.google.android.material.R.style.TextAppearance_Material3_TitleLarge, 32)
+        section("Scia a scomparsa")
         val temp = MaterialSwitch(this).apply {
             text = "Modalità temporanea di default"
             isChecked = Prefs.temporaryDefault
@@ -80,7 +86,7 @@ class SettingsActivity : AppCompatActivity() {
         chips(listOf("Intero disegno" to 0, "Scia progressiva" to 1), Prefs.fadeMode) { Prefs.fadeMode = it }
 
         // ---------------- Strumenti
-        title("Strumenti", com.google.android.material.R.style.TextAppearance_Material3_TitleLarge, 32)
+        section("Strumenti")
         val tools = listOf(
             Tool.PEN to "Penna", Tool.PENCIL to "Matita", Tool.HIGHLIGHTER to "Evidenziatore",
             Tool.SHAPE to "Forme", Tool.TEXT to "Testo",
@@ -99,7 +105,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         // ---------------- Barra flottante
-        title("Barra flottante", com.google.android.material.R.style.TextAppearance_Material3_TitleLarge, 32)
+        section("Barra flottante")
         label("Posizione iniziale")
         chips(
             listOf("Alto sx" to 0, "Alto dx" to 1, "Basso sx" to 2, "Basso dx" to 3), Prefs.toolbarCorner
@@ -112,6 +118,29 @@ class SettingsActivity : AppCompatActivity() {
     private fun params() = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
     )
+
+    /** Ogni gruppo di impostazioni vive in una scheda con il suo titolo. */
+    private fun section(name: String) {
+        val inner = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(18))
+        }
+        val card = MaterialCardView(this).apply {
+            radius = dp(22).toFloat()
+            cardElevation = 0f
+            setCardBackgroundColor(ContextCompat.getColor(context, R.color.card))
+            strokeWidth = dp(1)
+            strokeColor = ContextCompat.getColor(context, R.color.card_variant)
+            addView(inner)
+        }
+        root.addView(card, params().apply { topMargin = dp(20) })
+        column = inner
+        inner.addView(TextView(this).apply {
+            text = name
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleLarge)
+            setTypeface(typeface, Typeface.BOLD)
+        })
+    }
 
     private fun title(text: String, style: Int, topDp: Int) {
         column.addView(TextView(this).apply {
