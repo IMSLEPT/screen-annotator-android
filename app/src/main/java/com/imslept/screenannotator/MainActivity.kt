@@ -288,11 +288,13 @@ class MainActivity : AppCompatActivity() {
             addView(label("Interruttore grigio e non si attiva?", com.google.android.material.R.style.TextAppearance_Material3_BodyMedium, bold = true)
                 .apply { setTextColor(color(R.color.on_primary_container)) })
             addView(label(
-                "Android blocca questo permesso alle app installate da fuori dal Play Store. Per sbloccarlo:\n" +
-                    "1. Tocca «Apri info app» qui sotto\n" +
-                    "2. Tocca i tre puntini in alto a destra\n" +
-                    "3. Scegli «Consenti impostazioni con restrizioni» e conferma\n" +
-                    "4. Torna qui e premi «Attiva»",
+                "Android blocca questo permesso alle app installate da un file APK. Per sbloccarlo, in quest'ordine:\n" +
+                    "1. Premi «Attiva» qui sopra\n" +
+                    "2. Nella pagina tocca l'interruttore grigio e poi OK: senza questo passaggio il menu giusto non compare\n" +
+                    "3. Torna indietro e tocca «Apri info app» qui sotto\n" +
+                    "4. Tocca i tre puntini in alto a destra (non l'icona «apri app»)\n" +
+                    "5. Scegli «Consenti impostazioni con restrizioni» e conferma\n" +
+                    "6. Torna qui e premi «Attiva» di nuovo",
                 com.google.android.material.R.style.TextAppearance_Material3_BodySmall
             ).apply { setTextColor(color(R.color.on_primary_container)) }, lp(4))
             addView(MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {

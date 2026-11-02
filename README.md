@@ -48,3 +48,22 @@ Poi attiva "Mostra i tocchi sullo schermo". Senza il permesso, in modalita' dise
 
 Kotlin, viste Material 3, nessuna dipendenza oltre AndroidX e Material. `minSdk 29`, `targetSdk 35`.
 Compilazione locale: `gradle assembleRelease` (Gradle 8.10+, JDK 17).
+
+## Se «Mostra sopra altre app» è grigio (impostazioni con restrizioni)
+
+Android blocca alcuni permessi alle app installate da un file APK scaricato.
+
+**Via 1 (nell'app, senza PC)**
+1. Apri l'app e premi «Attiva» nella scheda «Prepara l'app».
+2. Nella pagina del permesso tocca l'interruttore grigio e poi OK. Serve a far comparire il menu.
+3. Torna indietro, apri Impostazioni → App → Screen Annotator, tocca i tre puntini in alto a destra → «Consenti impostazioni con restrizioni».
+4. Torna nell'app e premi «Attiva».
+
+**Via 2 (senza menu): installare con un installer a sessioni**
+Le app installate con un installer a sessioni (per esempio Obtainium, che segue le Release di questo repository) non vengono limitate. Disinstalla l'app, poi installa l'APK da Obtainium.
+
+**Via 3 (da computer con adb)**
+```
+adb shell appops set com.imslept.screenannotator ACCESS_RESTRICTED_SETTINGS allow
+adb shell appops set com.imslept.screenannotator SYSTEM_ALERT_WINDOW allow
+```
