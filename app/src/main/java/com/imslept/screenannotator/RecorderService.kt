@@ -76,7 +76,8 @@ class RecorderService : Service() {
     private fun startRecording(intent: Intent) {
         if (recording || stopping) return
 
-        val mic = (Prefs.audioMode == 1 || Prefs.audioMode == 3) &&
+        // Anche l'audio del dispositivo richiede il permesso di registrazione audio
+        val mic = Prefs.audioMode != 0 &&
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         if (mic) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
@@ -113,12 +114,16 @@ class RecorderService : Service() {
                 Toast.makeText(this, R.string.perm_overlay_body, Toast.LENGTH_LONG).show()
             }
 
-            val rec = ScreenRecorder(this, proj) { msg ->
-                main.post {
-                    Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
-                    stopRecording()
-                }
-            }
+            val rec = ScreenRecorder(
+                this, proj,
+                onWarn = { msg -> main.post { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() } },
+                onError = { msg ->
+                    main.post {
+                        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                        stopRecording()
+                    }
+                },
+            )
             rec.start()
             recorder = rec
             recording = true
@@ -195,6 +200,7 @@ class RecorderService : Service() {
 
     /** Funziona solo dopo: adb shell pm grant <pacchetto> android.permission.WRITE_SECURE_SETTINGS */
     private fun setShowTouches(on: Boolean) {
+        if (!on) return // se l'opzione e' spenta non tocco l'impostazione di sistema
         try {
             previousShowTouches = Settings.System.getInt(contentResolver, "show_touches", 0)
             Settings.System.putInt(contentResolver, "show_touches", if (on) 1 else 0)

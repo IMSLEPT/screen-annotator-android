@@ -1,26 +1,23 @@
 package com.imslept.screenannotator
 
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import com.google.android.material.card.MaterialCardView
-import com.google.android.material.chip.Chip
-import com.google.android.material.chip.ChipGroup
-import com.google.android.material.materialswitch.MaterialSwitch
-import com.google.android.material.slider.Slider
+import java.util.Locale
 
-/** Tutte le impostazioni: ogni modifica viene salvata subito. */
+/** Impostazioni: ogni modifica viene salvata subito e le anteprime mostrano l'effetto in diretta. */
 class SettingsActivity : AppCompatActivity() {
+
+    private val ui by lazy { Ui(this) }
+    private lateinit var column: LinearLayout
+    private lateinit var toolBody: LinearLayout
+    private var selectedTool = Tool.PEN
 
     private val palette = intArrayOf(
         0xFFE53935.toInt(), 0xFFFB8C00.toInt(), 0xFFFDD835.toInt(), 0xFF43A047.toInt(),
@@ -28,21 +25,17 @@ class SettingsActivity : AppCompatActivity() {
         0xFFFFFFFF.toInt(), 0xFF9E9E9E.toInt(), 0xFF212121.toInt(), 0xFF000000.toInt(),
     )
 
-    private lateinit var root: LinearLayout
-    private lateinit var column: LinearLayout
-
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        root = LinearLayout(this).apply {
+        selectedTool = if (Prefs.lastTool == Tool.ERASER) Tool.PEN else Prefs.lastTool
+
+        column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(16), dp(20), dp(32))
+            setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(32))
         }
-        column = root
         val scroll = ScrollView(this).apply {
-            setBackgroundColor(ContextCompat.getColor(context, R.color.bg))
-            addView(root, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            setBackgroundColor(ui.c(R.color.bg))
+            addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         setContentView(scroll)
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { v, insets ->
@@ -51,182 +44,213 @@ class SettingsActivity : AppCompatActivity() {
             insets
         }
 
-        title(getString(R.string.settings), com.google.android.material.R.style.TextAppearance_Material3_HeadlineMedium, 0)
+        // --- Intestazione con freccia indietro
+        column.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(ui.roundIconButton(R.drawable.ic_back, "Indietro") { finish() }, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
+            addView(
+                ui.text(getString(R.string.settings), 26f, bold = true),
+                ui.weight().apply { marginStart = ui.dp(14) }
+            )
+        }, ui.lp())
 
-        // ---------------- Registrazione
-        section("Registrazione")
-        label("Risoluzione (lato corto)")
-        chips(listOf("Nativa" to 0, "1440p" to 1440, "1080p" to 1080, "720p" to 720), Prefs.resolution) { Prefs.resolution = it }
-        label("Fotogrammi al secondo")
-        chips(listOf("30 fps" to 30, "60 fps" to 60), Prefs.fps) { Prefs.fps = it }
-        slider({ "Qualità (bitrate): $it Mbit/s" }, 2, 50, 1, Prefs.bitrateMbps) { Prefs.bitrateMbps = it }
-
-        label("Sorgente audio")
-        chips(
-            listOf("Nessuno" to 0, "Microfono" to 1, "Dispositivo" to 2, "Entrambi" to 3), Prefs.audioMode
-        ) { Prefs.audioMode = it }
-        val touches = MaterialSwitch(this).apply {
-            text = getString(R.string.show_touches)
-            isChecked = Prefs.showTouches
-            setOnCheckedChangeListener { _, c -> Prefs.showTouches = c }
-        }
-        column.addView(touches, params().apply { topMargin = dp(12) })
-
-        // ---------------- Scia a scomparsa
-        section("Scia a scomparsa")
-        val temp = MaterialSwitch(this).apply {
-            text = "Modalità temporanea di default"
-            isChecked = Prefs.temporaryDefault
-            setOnCheckedChangeListener { _, c -> Prefs.temporaryDefault = c }
-        }
-        column.addView(temp, params().apply { topMargin = dp(8) })
-        slider({ "Resta visibile: ${it} ms prima di svanire" }, 0, 8000, 100, Prefs.holdMs) { Prefs.holdMs = it }
-        slider({ "Durata dissolvenza: ${it} ms" }, 50, 4000, 50, Prefs.fadeMs) { Prefs.fadeMs = it }
-        label("Tipo di dissolvenza")
-        chips(listOf("Intero disegno" to 0, "Scia progressiva" to 1), Prefs.fadeMode) { Prefs.fadeMode = it }
-
-        // ---------------- Strumenti
-        section("Strumenti")
-        val tools = listOf(
-            Tool.PEN to "Penna", Tool.PENCIL to "Matita", Tool.HIGHLIGHTER to "Evidenziatore",
-            Tool.SHAPE to "Forme", Tool.TEXT to "Testo",
-        )
-        for ((tool, name) in tools) {
-            label(name)
-            swatches(Prefs.color(tool)) { Prefs.setColor(tool, it) }
-            val (mn, mx) = when (tool) {
-                Tool.HIGHLIGHTER -> Pair(6, 60)
-                Tool.TEXT -> Pair(12, 72)
-                else -> Pair(1, 30)
-            }
-            val what = if (tool == Tool.TEXT) "Dimensione" else "Spessore"
-            slider({ "$what: $it" }, mn, mx, 1, Prefs.width(tool)) { Prefs.setWidth(tool, it) }
-            slider({ "Opacità: $it%" }, 10, 100, 5, Prefs.opacity(tool)) { Prefs.setOpacity(tool, it) }
-        }
-
-        // ---------------- Barra flottante
-        section("Barra flottante")
-        label("Posizione iniziale")
-        chips(
-            listOf("Alto sx" to 0, "Alto dx" to 1, "Basso sx" to 2, "Basso dx" to 3), Prefs.toolbarCorner
-        ) { Prefs.toolbarCorner = it }
-        slider({ "Dimensione: $it%" }, 70, 150, 5, Prefs.toolbarScale) { Prefs.toolbarScale = it }
+        buildVideo()
+        buildAudio()
+        buildTrail()
+        buildTools()
+        buildToolbar()
     }
 
-    // ------------------------------------------------------------------ Componenti
+    private fun section(icon: Int, title: String, subtitle: String): LinearLayout {
+        val card = ui.card()
+        card.addView(ui.sectionHeader(icon, title, subtitle))
+        column.addView(card, ui.lp(18))
+        return card
+    }
 
-    private fun params() = LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+    private fun label(card: LinearLayout, text: String, top: Int = 18) {
+        card.addView(ui.text(text, 15f, R.color.ink_muted, bold = true), ui.lp(top))
+    }
+
+    private fun seconds(ms: Int): String =
+        if (ms < 1000) "$ms ms" else String.format(Locale.ITALY, "%.1f s", ms / 1000f)
+
+    // ------------------------------------------------------------------ Video
+
+    private fun buildVideo() {
+        val card = section(R.drawable.ic_video, "Video", "Qualità del filmato")
+        label(card, "Risoluzione")
+        card.addView(
+            ui.segmented(
+                listOf("Nativa" to 0, "1440p" to 1440, "1080p" to 1080, "720p" to 720), Prefs.resolution
+            ) { Prefs.resolution = it },
+            ui.lp(8)
+        )
+        label(card, "Fluidità")
+        card.addView(
+            ui.segmented(listOf("30 fps" to 30, "60 fps" to 60), Prefs.fps) { Prefs.fps = it },
+            ui.lp(8)
+        )
+        card.addView(
+            ui.slider("Nitidezza", 2, 50, 1, Prefs.bitrateMbps, { "$it Mbit/s" }) { Prefs.bitrateMbps = it },
+            ui.lp(20)
+        )
+        card.addView(ui.note("Più è alta, più il video è nitido ma pesa di più."), ui.lp(8))
+    }
+
+    // ------------------------------------------------------------------ Audio e tocchi
+
+    private fun buildAudio() {
+        val card = section(R.drawable.ic_speaker, "Audio e tocchi", "Cosa finisce nel video")
+        card.addView(
+            ui.tiles(
+                audioTiles(), columns = 2, current = Prefs.audioMode
+            ) { Prefs.audioMode = it },
+            ui.lp(16)
+        )
+        card.addView(
+            ui.switchRow("Mostra i tocchi", "Un cerchio sotto il dito mentre disegni", Prefs.showTouches) {
+                Prefs.showTouches = it
+            },
+            ui.lp(18)
+        )
+    }
+
+    private fun audioTiles() = listOf(
+        Tile(intArrayOf(R.drawable.ic_volume_off), "Nessun audio", 0),
+        Tile(intArrayOf(R.drawable.ic_mic), "Microfono", 1),
+        Tile(intArrayOf(R.drawable.ic_speaker), "Dispositivo", 2),
+        Tile(intArrayOf(R.drawable.ic_mic, R.drawable.ic_speaker), "Entrambi", 3),
     )
 
-    /** Ogni gruppo di impostazioni vive in una scheda con il suo titolo. */
-    private fun section(name: String) {
-        val inner = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(16), dp(18), dp(18))
-        }
-        val card = MaterialCardView(this).apply {
-            radius = dp(22).toFloat()
-            cardElevation = 0f
-            setCardBackgroundColor(ContextCompat.getColor(context, R.color.card))
-            strokeWidth = dp(1)
-            strokeColor = ContextCompat.getColor(context, R.color.card_variant)
-            addView(inner)
-        }
-        root.addView(card, params().apply { topMargin = dp(20) })
-        column = inner
-        inner.addView(TextView(this).apply {
-            text = name
-            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleLarge)
-            setTypeface(typeface, Typeface.BOLD)
-        })
+    // ------------------------------------------------------------------ Scia a scomparsa
+
+    private fun buildTrail() {
+        val card = section(R.drawable.ic_pen, "Scia a scomparsa", "Come svaniscono i disegni")
+        card.addView(
+            ui.switchRow("Disegni temporanei", "Se spento, restano finché non li cancelli", Prefs.temporaryDefault) {
+                Prefs.temporaryDefault = it
+            },
+            ui.lp(16)
+        )
+        card.addView(TrailPreview(this), ui.lp(16, h = ui.dp(120)))
+        card.addView(
+            ui.slider("Resta visibile", 0, 8000, 100, Prefs.holdMs, { seconds(it) }) { Prefs.holdMs = it },
+            ui.lp(18)
+        )
+        card.addView(
+            ui.slider("Svanisce in", 50, 4000, 50, Prefs.fadeMs, { seconds(it) }) { Prefs.fadeMs = it },
+            ui.lp(14)
+        )
+        label(card, "Come svanisce")
+        val hint = ui.note(fadeHint(Prefs.fadeMode))
+        card.addView(
+            ui.segmented(listOf("Tutto insieme" to 0, "A scia" to 1), Prefs.fadeMode) {
+                Prefs.fadeMode = it
+                (hint.getChildAt(1) as android.widget.TextView).text = fadeHint(it)
+            },
+            ui.lp(8)
+        )
+        card.addView(hint, ui.lp(10))
     }
 
-    private fun title(text: String, style: Int, topDp: Int) {
-        column.addView(TextView(this).apply {
-            this.text = text
-            setTextAppearance(style)
-        }, params().apply { topMargin = dp(topDp) })
+    private fun fadeHint(mode: Int) =
+        if (mode == 0) "Il disegno intero svanisce tutto nello stesso momento."
+        else "Il tratto si consuma dal punto più vecchio a quello più recente."
+
+    // ------------------------------------------------------------------ Strumenti
+
+    private fun widthRange(t: Tool): Pair<Int, Int> = when (t) {
+        Tool.HIGHLIGHTER -> Pair(6, 60)
+        Tool.TEXT -> Pair(12, 72)
+        Tool.ERASER -> Pair(8, 64)
+        else -> Pair(1, 30)
     }
 
-    private fun label(text: String) {
-        column.addView(TextView(this).apply {
-            this.text = text
-            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleSmall)
-        }, params().apply { topMargin = dp(14) })
+    private fun buildTools() {
+        val card = section(R.drawable.ic_pencil, "Strumenti", "Colore e spessore di ognuno")
+        val tiles = listOf(
+            Tile(intArrayOf(R.drawable.ic_pen), "Penna", Tool.PEN.ordinal),
+            Tile(intArrayOf(R.drawable.ic_pencil), "Matita", Tool.PENCIL.ordinal),
+            Tile(intArrayOf(R.drawable.ic_highlighter), "Evidenziatore", Tool.HIGHLIGHTER.ordinal),
+            Tile(intArrayOf(R.drawable.ic_shape), "Forme", Tool.SHAPE.ordinal),
+            Tile(intArrayOf(R.drawable.ic_text), "Testo", Tool.TEXT.ordinal),
+            Tile(intArrayOf(R.drawable.ic_eraser), "Gomma", Tool.ERASER.ordinal),
+        )
+        card.addView(
+            ui.tiles(tiles, columns = 3, current = selectedTool.ordinal, heightDp = 68, labelSp = 12f) {
+                selectedTool = Tool.values()[it]
+                renderTool()
+            },
+            ui.lp(16)
+        )
+        toolBody = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        card.addView(toolBody, ui.lp(0))
+        renderTool()
     }
 
-    private fun chips(options: List<Pair<String, Int>>, current: Int, onPick: (Int) -> Unit) {
-        val group = ChipGroup(this).apply {
-            isSingleSelection = true
-            isSelectionRequired = true
+    private fun renderTool() {
+        val t = selectedTool
+        toolBody.removeAllViews()
+        val preview = ToolPreview(this).apply { tool = t }
+        toolBody.addView(preview, ui.lp(16, h = ui.dp(84)))
+
+        if (t != Tool.ERASER) {
+            toolBody.addView(
+                ui.swatchGrid(palette, Prefs.color(t)) {
+                    Prefs.setColor(t, it)
+                    preview.invalidate()
+                },
+                ui.lp(14)
+            )
         }
-        for ((name, value) in options) {
-            group.addView(Chip(this).apply {
-                id = View.generateViewId()
-                text = name
-                isCheckable = true
-                isChecked = value == current
-                setOnClickListener { onPick(value) }
-            })
+        val (mn, mx) = widthRange(t)
+        val title = when (t) {
+            Tool.TEXT -> "Dimensione"
+            Tool.ERASER -> "Dimensione gomma"
+            else -> "Spessore"
         }
-        column.addView(group, params())
+        toolBody.addView(
+            ui.slider(title, mn, mx, 1, Prefs.width(t).coerceIn(mn, mx), { "$it" }) {
+                Prefs.setWidth(t, it)
+                preview.invalidate()
+            },
+            ui.lp(if (t == Tool.ERASER) 18 else 10)
+        )
+        if (t != Tool.ERASER) {
+            toolBody.addView(
+                ui.slider("Opacità", 10, 100, 5, Prefs.opacity(t).coerceIn(10, 100), { "$it%" }) {
+                    Prefs.setOpacity(t, it)
+                    preview.invalidate()
+                },
+                ui.lp(18)
+            )
+        }
     }
 
-    private fun slider(label: (Int) -> String, from: Int, to: Int, step: Int, value: Int, onChange: (Int) -> Unit) {
-        val tv = TextView(this).apply {
-            text = label(value)
-            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
-        }
-        // Lo Slider richiede un valore allineato al passo: lo riallineo se serve
-        val snapped = (from + Math.round((value.coerceIn(from, to) - from).toFloat() / step) * step).coerceIn(from, to)
-        val s = Slider(this).apply {
-            valueFrom = from.toFloat()
-            valueTo = to.toFloat()
-            stepSize = step.toFloat()
-            this.value = snapped.toFloat()
-            addOnChangeListener { _, v, fromUser ->
-                if (fromUser) {
-                    tv.text = label(v.toInt())
-                    onChange(v.toInt())
-                }
-            }
-        }
-        column.addView(tv, params().apply { topMargin = dp(10) })
-        column.addView(s, params())
-    }
+    // ------------------------------------------------------------------ Barra flottante
 
-    private fun swatches(current: Int, onPick: (Int) -> Unit) {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val views = ArrayList<View>()
-
-        fun restyle(selected: Int) {
-            for (v in views) {
-                val c = v.tag as Int
-                val on = c == selected
-                v.background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(c)
-                    setStroke(if (on) dp(3) else dp(1), if (on) 0xFFD97757.toInt() else 0x66888888)
-                }
-            }
-        }
-
-        for (c in palette) {
-            val v = View(this).apply {
-                tag = c
-                setOnClickListener {
-                    onPick(c)
-                    restyle(c)
-                }
-            }
-            views.add(v)
-            row.addView(v, LinearLayout.LayoutParams(dp(34), dp(34)).apply { setMargins(dp(3), dp(4), dp(3), dp(4)) })
-        }
-        restyle(current)
-        column.addView(HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(row)
-        }, params())
+    private fun buildToolbar() {
+        val card = section(R.drawable.ic_overlay, "Barra flottante", "Dove compare mentre registri")
+        card.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(CornerPicker(context, Prefs.toolbarCorner) { Prefs.toolbarCorner = it })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(ui.text("Posizione iniziale", 16f, bold = true))
+                addView(ui.text("Tocca l'angolo del telefono dove vuoi la barra.", 13f, R.color.ink_muted), ui.lp(4))
+                addView(
+                    ui.text("Durante la registrazione puoi trascinarla ovunque o ridurla a una bolla.", 13f, R.color.ink_muted),
+                    ui.lp(10)
+                )
+            }, ui.weight().apply { marginStart = ui.dp(18) })
+        }, ui.lp(16))
+        card.addView(
+            ui.slider("Dimensione", 70, 150, 5, Prefs.toolbarScale, { "$it%" }) { Prefs.toolbarScale = it },
+            ui.lp(20)
+        )
+        card.addView(ui.note("Le modifiche valgono dalla prossima registrazione."), ui.lp(8))
     }
 }

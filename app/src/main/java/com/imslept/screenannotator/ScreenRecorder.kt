@@ -42,6 +42,7 @@ import kotlin.math.min
 class ScreenRecorder(
     private val ctx: Context,
     private val projection: MediaProjection,
+    private val onWarn: (String) -> Unit,
     private val onError: (String) -> Unit,
 ) {
     private companion object {
@@ -313,7 +314,9 @@ class ScreenRecorder(
                 }
             }
         } catch (e: Exception) {
-            if (running) onError("Errore audio: " + e.message)
+            // L'audio non e' indispensabile: se fallisce si continua con il solo video
+            if (track < 0) muxer.dropExpected()
+            if (running) onWarn("Audio non disponibile: registro solo il video")
         }
     }
 
@@ -359,7 +362,7 @@ class ScreenRecorder(
  * Unisce i campioni video e audio nello stesso MP4. Il muxer parte solo quando entrambe le tracce
  * sono pronte: i campioni arrivati prima vengono tenuti in memoria e scritti subito dopo.
  */
-private class TrackMuxer(private val muxer: MediaMuxer, private val expected: Int) {
+private class TrackMuxer(private val muxer: MediaMuxer, private var expected: Int) {
     private class Pending(val track: Int, val data: ByteArray, val flags: Int, val pts: Long)
 
     private var added = 0
@@ -379,6 +382,18 @@ private class TrackMuxer(private val muxer: MediaMuxer, private val expected: In
             pending.clear()
         }
         return idx
+    }
+
+    /** Una traccia attesa non arrivera' piu' (audio fallito): si parte con quelle gia' pronte. */
+    @Synchronized
+    fun dropExpected() {
+        if (expected > 1) expected--
+        if (!started && added > 0 && added == expected) {
+            muxer.start()
+            started = true
+            for (p in pending) writeNow(p.track, p.data, p.flags, p.pts)
+            pending.clear()
+        }
     }
 
     @Synchronized

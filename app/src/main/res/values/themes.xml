@@ -6,6 +6,10 @@
         <item name="colorPrimaryContainer">@color/primary_container</item>
         <item name="colorOnPrimaryContainer">@color/on_primary_container</item>
         <item name="colorSecondary">@color/brand_blue</item>
+        <item name="colorSecondaryContainer">@color/primary_container</item>
+        <item name="colorOnSecondaryContainer">@color/on_primary_container</item>
+        <item name="colorTertiaryContainer">@color/primary_container</item>
+        <item name="colorOnTertiaryContainer">@color/on_primary_container</item>
         <item name="colorTertiary">@color/brand_green</item>
         <item name="colorSurface">@color/bg</item>
         <item name="colorOnSurface">@color/ink</item>
