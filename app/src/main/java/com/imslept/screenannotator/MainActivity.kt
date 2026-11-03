@@ -9,7 +9,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
@@ -30,6 +30,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
@@ -169,7 +170,7 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             setTextColor(ui.c(R.color.ink_on_orange))
             typeface = android.graphics.Typeface.DEFAULT_BOLD
-            background = ui.oval(ui.c(R.color.brand_orange))
+            background = ui.gradOval(ui.orange())
         }, LinearLayout.LayoutParams(ui.dp(30), ui.dp(30)))
         addView(ui.text(text, 15f), ui.weight().apply { marginStart = ui.dp(14) })
     }
@@ -182,7 +183,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(32))
         }
         scroll = ScrollView(this).apply {
-            setBackgroundColor(ui.c(R.color.bg))
+            setBackgroundResource(R.drawable.bg_screen)
             addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         setContentView(scroll)
@@ -196,6 +197,12 @@ class MainActivity : AppCompatActivity() {
         column.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            // il logo dell'icona: obiettivo, ricciolo e videocamera
+            addView(ImageView(context).apply {
+                setImageResource(R.drawable.ic_logo)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                contentDescription = null
+            }, LinearLayout.LayoutParams(ui.dp(54), ui.dp(47)).apply { marginEnd = ui.dp(12) })
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(ui.text(getString(R.string.app_name), 26f, bold = true))
@@ -209,7 +216,9 @@ class MainActivity : AppCompatActivity() {
             )
         }, ui.lp())
 
-        // --- Pulsante di registrazione
+        // --- Pulsante di registrazione: l'obiettivo dell'icona (anello blu notte, anello bianco, disco arancione)
+        // con il ricciolo e il puntino attorno. Le misure sono quelle del logo a 0,3 dp per pixel dell'originale:
+        // il centro dell'obiettivo sta a (111, 117) dp; il riquadro e' 232 x 216 dp cosi' l'anello pulsante non viene tagliato.
         ring = View(this).apply {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -218,18 +227,36 @@ class MainActivity : AppCompatActivity() {
                 alpha = 90
             }
         }
-        heroIcon = ui.icon(R.drawable.ic_record, R.color.ink_on_orange, 64)
+        heroIcon = ui.icon(R.drawable.ic_stop, R.color.lens_gap, 30).apply { visibility = View.GONE }
         heroDisc = FrameLayout(this).apply {
-            background = ui.oval(ui.c(R.color.brand_orange))
-            elevation = ui.dp(6).toFloat()
-            addView(heroIcon.apply { layoutParams = FrameLayout.LayoutParams(ui.dp(64), ui.dp(64), Gravity.CENTER) })
+            background = ui.gradOval(ui.orange())
+            addView(heroIcon.apply { layoutParams = FrameLayout.LayoutParams(ui.dp(30), ui.dp(30), Gravity.CENTER) })
+        }
+        val lens = FrameLayout(this).apply {
+            background = ui.gradOval(intArrayOf(ui.c(R.color.lens_hi), ui.c(R.color.lens_lo)))
+            ui.softShadow(this, 8)
+            // anello bianco tra l'obiettivo e il disco
+            addView(View(context).apply { background = ui.oval(ui.c(R.color.lens_gap)) },
+                FrameLayout.LayoutParams(ui.dp(96), ui.dp(96), Gravity.CENTER))
+            addView(heroDisc, FrameLayout.LayoutParams(ui.dp(72), ui.dp(72), Gravity.CENTER))
         }
         heroButton = FrameLayout(this).apply {
             isClickable = true
             contentDescription = getString(R.string.start_recording)
             setOnClickListener { onStartClick() }
-            addView(ring, FrameLayout.LayoutParams(ui.dp(176), ui.dp(176), Gravity.CENTER))
-            addView(heroDisc, FrameLayout.LayoutParams(ui.dp(140), ui.dp(140), Gravity.CENTER))
+            // anello pulsante dietro al ricciolo, poi il ricciolo, poi l'obiettivo
+            addView(ring, FrameLayout.LayoutParams(ui.dp(176), ui.dp(176)).apply {
+                leftMargin = ui.dp(23)
+                topMargin = ui.dp(29)
+            })
+            addView(ImageView(context).apply {
+                setImageResource(R.drawable.ic_logo_swoosh)
+                scaleType = ImageView.ScaleType.FIT_XY
+            }, FrameLayout.LayoutParams(ui.dp(232), ui.dp(200)))
+            addView(lens, FrameLayout.LayoutParams(ui.dp(160), ui.dp(160)).apply {
+                leftMargin = ui.dp(31)
+                topMargin = ui.dp(37)
+            })
         }
         heroTitle = ui.text("", 22f, bold = true).apply { gravity = Gravity.CENTER }
         heroSubtitle = ui.text("", 15f, R.color.ink_muted).apply { gravity = Gravity.CENTER }
@@ -251,8 +278,8 @@ class MainActivity : AppCompatActivity() {
         column.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            addView(heroButton, LinearLayout.LayoutParams(ui.dp(176), ui.dp(176)))
-            addView(heroTitle, ui.lp(14))
+            addView(heroButton, LinearLayout.LayoutParams(ui.dp(232), ui.dp(216)))
+            addView(heroTitle, ui.lp(6))
             addView(heroSubtitle, ui.lp(2))
             addView(summary, ui.lp(14, w = ViewGroup.LayoutParams.WRAP_CONTENT))
         }, ui.lp(24))
@@ -414,9 +441,19 @@ class MainActivity : AppCompatActivity() {
         val secureOk = checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
 
         // Pulsante principale
-        heroDisc.background = ui.oval(ui.c(if (rec) R.color.rec_red else R.color.brand_orange))
-        heroIcon.setImageResource(if (rec) R.drawable.ic_stop else R.drawable.ic_record)
-        heroIcon.imageTintList = ColorStateList.valueOf(ui.c(if (rec) R.color.bg else R.color.ink_on_orange))
+        // il disco dell'obiettivo: arancione a riposo, rosso con il quadrato di stop mentre registra
+        heroDisc.background = if (rec) {
+            ui.gradOval(
+                intArrayOf(
+                    ColorUtils.blendARGB(ui.c(R.color.rec_red), Color.WHITE, 0.25f),
+                    ui.c(R.color.rec_red),
+                    ui.c(R.color.rec_red_dark),
+                )
+            )
+        } else {
+            ui.gradOval(ui.orange())
+        }
+        heroIcon.visibility = if (rec) View.VISIBLE else View.GONE
         heroButton.contentDescription = getString(if (rec) R.string.stop_recording else R.string.start_recording)
         (ring.background as GradientDrawable).setStroke(ui.dp(3), ui.c(if (rec) R.color.rec_red else R.color.brand_orange))
         heroTitle.text = when {
@@ -438,8 +475,8 @@ class MainActivity : AppCompatActivity() {
         if (rec) {
             pulse = ObjectAnimator.ofPropertyValuesHolder(
                 ring,
-                PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.14f),
-                PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.14f),
+                PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.12f),
+                PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.12f),
             ).apply {
                 duration = 900
                 repeatCount = ValueAnimator.INFINITE

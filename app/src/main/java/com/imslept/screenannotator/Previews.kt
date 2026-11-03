@@ -2,11 +2,13 @@ package com.imslept.screenannotator
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.MotionEvent
@@ -38,9 +40,10 @@ class TrailPreview(context: Context) : View(context) {
     private val xs = FloatArray(n + 1)
     private val ys = FloatArray(n + 1)
     private var t0 = 0L
+    private var shaderW = -1f
 
     init {
-        background = ui.bg(ui.c(R.color.card_variant), 20)
+        background = ui.bg(ui.c(R.color.card_variant), 22)
     }
 
     override fun onAttachedToWindow() {
@@ -75,6 +78,15 @@ class TrailPreview(context: Context) : View(context) {
         }
 
         seg.strokeWidth = 7f * ui.density
+        // il tratto ha la sfumatura dell'icona: ambra, arancio, rosso
+        if (shaderW != w) {
+            shaderW = w
+            seg.shader = LinearGradient(
+                padX, 0f, w - padX, 0f,
+                intArrayOf(ui.c(R.color.brand_amber), ui.c(R.color.brand_orange), ui.c(R.color.brand_red)),
+                null, Shader.TileMode.CLAMP
+            )
+        }
         val layer = canvas.saveLayer(0f, 0f, w, h, null)
         for (i in 1..n) {
             val ti = drawMs * i / n
@@ -100,7 +112,7 @@ class ToolPreview(context: Context) : View(context) {
     var tool: Tool = Tool.PEN
 
     init {
-        background = ui.bg(0xFFB0AEA5.toInt(), 20)
+        background = ui.bg(0xFFC9D1E6.toInt(), 22)
     }
 
     override fun onDraw(canvas: Canvas) {

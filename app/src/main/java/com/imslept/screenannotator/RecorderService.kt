@@ -264,7 +264,7 @@ class RecorderService : Service() {
             .setOnlyAlertOnce(true)
             .setUsesChronometer(true)
             .setWhen(if (startedAt > 0) startedAt else System.currentTimeMillis())
-            .setColor(0xFFD97757.toInt())
+            .setColor(0xFFFF6A13.toInt())
         if (overlay != null) {
             // l'azione dice cosa succede premendola: se sto disegnando, torno al tocco
             b.addAction(Notification.Action.Builder(null, if (drawing) "Tocco" else "Disegno", action(2, ACTION_TOGGLE_DRAW)).build())

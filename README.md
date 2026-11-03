@@ -19,6 +19,20 @@ Ogni push su `main` compila l'app con GitHub Actions. L'APK si scarica dalla pag
 - Scia: ritardo prima della dissolvenza, durata, dissolvenza dell'intero disegno oppure punto per punto
 - Tutte le preferenze salvate automaticamente
 
+## Aspetto
+
+L'icona e tutta la grafica interna seguono lo stesso stile: bianco freddo con aloni morbidi, blu notte e l'arancione sfumato
+(ambra → arancio → rosso) dell'obiettivo con il ricciolo.
+
+- **Icona**: grafica vettoriale tracciata dall'icona originale (nessuna immagine da ridimensionare). Il glifo sta interamente dentro il cerchio da
+  64 dp al centro dei 108 dp dell'icona adattiva, quindi nessun launcher lo ritaglia, qualunque forma usi (cerchio, squircle, quadrato
+  arrotondato). C'e' anche la versione monocromatica per le icone a tema di Android 13+ e la sagoma per notifica e tile.
+- **File**: `ic_launcher_bg.xml` (sfondo), `ic_launcher_foreground.xml` (glifo a colori), `ic_launcher_monochrome.xml` (a tema),
+  `ic_logo.xml` e `ic_logo_swoosh.xml` (logo nell'app), `ic_notification.xml` (sagoma).
+- **Dentro l'app**: schede bianche con ombre tenui, pulsanti e selezioni con la sfumatura dell'icona, cursori con tratto sfumato,
+  pulsante di registrazione a forma di obiettivo (anello blu notte, anello bianco, disco arancione che diventa rosso mentre registra).
+  Tema chiaro e scuro (blu notte). La palette sta in `res/values/colors.xml` e `res/values-night/colors.xml`.
+
 ## Prima configurazione
 
 1. Installa l'APK e apri l'app.

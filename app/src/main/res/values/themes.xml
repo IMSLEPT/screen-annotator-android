@@ -23,6 +23,8 @@
         <item name="colorOutline">@color/outline</item>
         <item name="colorOutlineVariant">@color/card_variant</item>
         <item name="android:colorBackground">@color/bg</item>
+        <!-- stesso fondo con aloni delle schermate: niente lampo di colore all'apertura -->
+        <item name="android:windowBackground">@drawable/bg_screen</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">?attr/isLightTheme</item>

@@ -34,7 +34,7 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(32))
         }
         val scroll = ScrollView(this).apply {
-            setBackgroundColor(ui.c(R.color.bg))
+            setBackgroundResource(R.drawable.bg_screen)
             addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         setContentView(scroll)

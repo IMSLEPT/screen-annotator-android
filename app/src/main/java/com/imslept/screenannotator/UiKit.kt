@@ -2,6 +2,7 @@ package com.imslept.screenannotator
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.Drawable
@@ -27,8 +28,9 @@ import com.google.android.material.materialswitch.MaterialSwitch
 class Tile(val icons: IntArray, val label: String, val value: Int)
 
 /**
- * Piccolo kit di componenti grafici costruiti in codice, cosi' tutta l'app ha lo stesso aspetto:
- * schede, selettori a segmenti, riquadri, cursori con valore, interruttori e pulsanti.
+ * Piccolo kit di componenti grafici costruiti in codice, cosi' tutta l'app ha lo stesso aspetto
+ * dell'icona: sfumature ambra → arancio → rosso, blu notte, bianco freddo, angoli molto morbidi
+ * e ombre leggere colorate.
  */
 class Ui(val ctx: Context) {
     val density: Float = ctx.resources.displayMetrics.density
@@ -51,6 +53,26 @@ class Ui(val ctx: Context) {
         shape = GradientDrawable.OVAL
         setColor(color)
         if (strokeColor != null) setStroke(dp(strokeDp), strokeColor)
+    }
+
+    // ------------------------------------------------------------------ Sfumature dell'icona
+
+    /** I tre colori dell'arancione dell'icona: ambra, arancio, rosso. */
+    fun orange(): IntArray = intArrayOf(c(R.color.brand_amber), c(R.color.brand_orange), c(R.color.brand_red))
+
+    /** Riquadro arrotondato con la sfumatura arancione in diagonale. */
+    fun gradRound(radiusDp: Int, orientation: GradientDrawable.Orientation = GradientDrawable.Orientation.TL_BR): GradientDrawable =
+        GradientDrawable(orientation, orange()).apply { cornerRadius = radiusDp * density }
+
+    /** Cerchio con sfumatura in diagonale (dal primo all'ultimo colore). */
+    fun gradOval(colors: IntArray, orientation: GradientDrawable.Orientation = GradientDrawable.Orientation.TL_BR): GradientDrawable =
+        GradientDrawable(orientation, colors).apply { shape = GradientDrawable.OVAL }
+
+    /** Ombra morbida con la tinta blu notte dell'icona (sparisce da sola in tema scuro). */
+    fun softShadow(v: View, elevationDp: Int) {
+        v.elevation = dp(elevationDp).toFloat()
+        v.outlineSpotShadowColor = c(R.color.shadow_tint)
+        v.outlineAmbientShadowColor = c(R.color.shadow_tint)
     }
 
     /** Sfondo con effetto onda al tocco, limitato alla stessa forma arrotondata. */
@@ -85,21 +107,23 @@ class Ui(val ctx: Context) {
 
     fun card(vararg children: View, pad: Int = 18): LinearLayout = LinearLayout(ctx).apply {
         orientation = LinearLayout.VERTICAL
-        background = bg(c(R.color.card), 26, c(R.color.card_variant))
+        background = bg(c(R.color.card), 28, c(R.color.card_variant))
+        softShadow(this, 4)
         setPadding(dp(pad), dp(pad), dp(pad), dp(pad))
         for (v in children) addView(v)
     }
 
+    /** Titolo di sezione con il medaglione arancione (come il disco dell'icona). */
     fun sectionHeader(@DrawableRes iconRes: Int, title: String, subtitle: String? = null): LinearLayout =
         LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(FrameLayout(ctx).apply {
-                background = oval(c(R.color.primary_container))
-                addView(icon(iconRes, R.color.on_primary_container, 22).apply {
+                background = gradOval(orange())
+                addView(icon(iconRes, R.color.ink_on_orange, 22).apply {
                     layoutParams = FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER)
                 })
-            }, LinearLayout.LayoutParams(dp(42), dp(42)))
+            }, LinearLayout.LayoutParams(dp(44), dp(44)))
             addView(LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(text(title, 18f, bold = true))
@@ -123,16 +147,16 @@ class Ui(val ctx: Context) {
 
     // ------------------------------------------------------------------ Pulsanti
 
-    /** Pulsante a pillola. filled = arancione pieno, altrimenti tonale. */
+    /** Pulsante a pillola. filled = sfumatura arancione con testo blu notte, altrimenti tonale pesca. */
     fun button(label: String, filled: Boolean = true, @DrawableRes iconRes: Int? = null, onClick: () -> Unit): LinearLayout =
         LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            val fill = if (filled) c(R.color.brand_orange) else c(R.color.primary_container)
             val ink = if (filled) c(R.color.ink_on_orange) else c(R.color.on_primary_container)
-            background = ripple(bg(fill, 22), 22, 0x33000000)
-            setPadding(dp(18), 0, dp(18), 0)
-            minimumHeight = dp(44)
+            val face: Drawable = if (filled) gradRound(22) else bg(c(R.color.primary_container), 22)
+            background = ripple(face, 22, 0x33000000)
+            setPadding(dp(20), 0, dp(20), 0)
+            minimumHeight = dp(46)
             isClickable = true
             if (iconRes != null) {
                 addView(ImageView(ctx).apply {
@@ -152,7 +176,8 @@ class Ui(val ctx: Context) {
 
     fun roundIconButton(@DrawableRes iconRes: Int, description: String, onClick: () -> Unit): FrameLayout =
         FrameLayout(ctx).apply {
-            background = ripple(oval(c(R.color.card_variant)), 24)
+            background = ripple(oval(c(R.color.card), c(R.color.card_variant)), 24)
+            softShadow(this, 3)
             isClickable = true
             contentDescription = description
             setOnClickListener { onClick() }
@@ -163,18 +188,18 @@ class Ui(val ctx: Context) {
 
     // ------------------------------------------------------------------ Selettori
 
-    /** Selettore a segmenti: la scelta attiva e' una pillola arancione. */
+    /** Selettore a segmenti: la scelta attiva e' una pillola con la sfumatura arancione. */
     fun segmented(options: List<Pair<String, Int>>, current: Int, onPick: (Int) -> Unit): LinearLayout {
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = bg(c(R.color.card_variant), 18)
+            background = bg(c(R.color.card_variant), 20)
             setPadding(dp(4), dp(4), dp(4), dp(4))
         }
         val items = ArrayList<Pair<TextView, Int>>()
         fun paint(sel: Int) {
             for ((tv, v) in items) {
                 val on = v == sel
-                tv.background = if (on) bg(c(R.color.brand_orange), 14) else null
+                tv.background = if (on) gradRound(16) else null
                 tv.setTextColor(c(if (on) R.color.ink_on_orange else R.color.ink))
             }
         }
@@ -211,8 +236,8 @@ class Ui(val ctx: Context) {
         fun paint(sel: Int) {
             for ((cell, v) in cells) {
                 val on = v == sel
-                cell.background = if (on) ripple(bg(c(R.color.brand_orange), 18), 18, 0x33000000)
-                else ripple(bg(c(R.color.card_variant), 18), 18)
+                cell.background = if (on) ripple(gradRound(20), 20, 0x33000000)
+                else ripple(bg(c(R.color.card_variant), 20), 20)
                 ink(cell, c(if (on) R.color.ink_on_orange else R.color.ink))
             }
         }
@@ -271,12 +296,12 @@ class Ui(val ctx: Context) {
     private fun sliderTrack(): LayerDrawable {
         val h = dp(8)
         val back = GradientDrawable().apply {
-            setColor(ColorUtils.setAlphaComponent(c(R.color.outline), 90))
+            setColor(ColorUtils.setAlphaComponent(c(R.color.outline), 110))
             cornerRadius = h / 2f
             setSize(1, h)
         }
-        val front = GradientDrawable().apply {
-            setColor(c(R.color.brand_orange))
+        // la parte riempita ha la sfumatura dell'icona, da ambra a rosso
+        val front = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, orange()).apply {
             cornerRadius = h / 2f
             setSize(1, h)
         }
@@ -287,10 +312,11 @@ class Ui(val ctx: Context) {
         }
     }
 
+    /** Pallino bianco con anello arancione, come l'anello bianco attorno al disco dell'icona. */
     private fun sliderThumb(): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
-        setColor(c(R.color.brand_orange))
-        setStroke(dp(3), c(R.color.card))
+        setColor(c(R.color.card))
+        setStroke(dp(4), c(R.color.brand_orange))
         setSize(dp(28), dp(28))
     }
 
@@ -352,8 +378,14 @@ class Ui(val ctx: Context) {
                 if (subtitle != null) addView(text(subtitle, 13f, R.color.ink_muted))
             }, weight().apply { marginEnd = dp(12) })
             addView(MaterialSwitch(ctx).apply {
+                val on = intArrayOf(android.R.attr.state_checked)
+                val off = intArrayOf()
+                val states = arrayOf(on, off)
+                // acceso: binario arancione e pallino bianco; spento: binario chiaro (il bordo e' il colore "outline" del tema)
+                trackTintList = ColorStateList(states, intArrayOf(c(R.color.brand_orange), c(R.color.card_variant)))
+                thumbTintList = ColorStateList(states, intArrayOf(Color.WHITE, c(R.color.ink_muted)))
                 isChecked = checked
-                setOnCheckedChangeListener { _, on -> onChange(on) }
+                setOnCheckedChangeListener { _, isOn -> onChange(isOn) }
             })
         }
 
@@ -367,7 +399,7 @@ class Ui(val ctx: Context) {
                 val on = color == sel
                 v.background = oval(
                     color,
-                    if (on) c(R.color.ink) else ColorUtils.setAlphaComponent(c(R.color.outline), 140),
+                    if (on) c(R.color.ink) else ColorUtils.setAlphaComponent(c(R.color.outline), 160),
                     if (on) 3 else 1,
                 )
             }

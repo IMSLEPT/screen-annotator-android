@@ -1,18 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#141413</color>
-    <color name="brand_orange">#D97757</color>
-    <color name="brand_blue">#6A9BCC</color>
-    <color name="brand_green">#788C5D</color>
-    <color name="rec_red">#D64545</color>
+    <!-- Palette ricavata dall'icona: arancione sfumato (ambra → arancio → rosso), blu notte, bianco freddo -->
+    <color name="brand_amber">#FFAA2E</color>
+    <color name="brand_orange">#FF6A13</color>
+    <color name="brand_red">#F51F00</color>
+    <color name="brand_blue">#6C8CF0</color>
+    <color name="brand_green">#2FBF71</color>
+    <color name="rec_red">#E8332A</color>
+    <color name="rec_red_dark">#B3141C</color>
 
-    <color name="bg">#FAF9F5</color>
-    <color name="ink">#141413</color>
-    <color name="ink_muted">#6B6A64</color>
+    <color name="bg">#F6F8FD</color>
+    <color name="ink">#0F1F36</color>
+    <color name="ink_muted">#5D6B88</color>
     <color name="card">#FFFFFF</color>
-    <color name="card_variant">#E8E6DC</color>
-    <color name="outline">#B0AEA5</color>
-    <color name="primary_container">#F6DED3</color>
-    <color name="on_primary_container">#5A2A18</color>
-    <color name="ink_on_orange">#141413</color>
+    <color name="card_variant">#EDF0F8</color>
+    <color name="outline">#C5CDE3</color>
+    <color name="primary_container">#FFE6D5</color>
+    <color name="on_primary_container">#8A2D00</color>
+    <color name="ink_on_orange">#0F1F36</color>
+
+    <!-- Obiettivo del pulsante principale e ombre morbide colorate -->
+    <color name="lens_hi">#44577A</color>
+    <color name="lens_lo">#0B1830</color>
+    <color name="lens_gap">#FFFFFF</color>
+    <color name="shadow_tint">#4A5A8C</color>
+    <color name="glow_warm">#2EFF8A4D</color>
+    <color name="glow_cool">#4A9DB4EE</color>
+    <color name="glow_clear">#00FFFFFF</color>
 </resources>

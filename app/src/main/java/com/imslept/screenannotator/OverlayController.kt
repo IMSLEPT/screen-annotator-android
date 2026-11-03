@@ -55,11 +55,16 @@ class OverlayController(
     private val onDrawingChanged: (Boolean) -> Unit = {},
 ) {
     private companion object {
-        const val ORANGE = 0xFFD97757.toInt()
-        const val INK = 0xFF141413.toInt()
+        // Colori dell'icona: arancione sfumato (ambra → arancio → rosso) e blu notte
+        const val AMBER = 0xFFFFAA2E.toInt()
+        const val ORANGE = 0xFFFF6A13.toInt()
+        const val FLAME = 0xFFF51F00.toInt()
+        const val INK = 0xFF0F1F36.toInt()
+        const val NAVY_HI = 0xF21D2B49.toInt()
+        const val NAVY_LO = 0xF20A1329.toInt()
         const val PRIMARY = 0xFFFFFFFF.toInt()
         const val MUTED = 0xB3FFFFFF.toInt()
-        const val REC_RED = 0xFFE5484D.toInt()
+        const val REC_RED = 0xFFE8332A.toInt()
 
         /** Misure in dp a scala 100%. */
         const val BAR_W = 64f
@@ -283,7 +288,7 @@ class OverlayController(
             refreshTools()
             bubbleDisc.setImageResource(if (on) R.drawable.ic_pencil else R.drawable.ic_touch)
             bubbleDisc.imageTintList = ColorStateList.valueOf(if (on) INK else PRIMARY)
-            bubbleDisc.background = circle(if (on) ORANGE else 0xF2262624.toInt())
+            bubbleDisc.background = if (on) orangeCircle() else circle(NAVY_HI)
         }
         onDrawingChanged(on)
     }
@@ -315,7 +320,7 @@ class OverlayController(
             imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
             minLines = 1
             maxLines = 4
-            highlightColor = 0x66D97757
+            highlightColor = 0x66FF6A13
             background = roundPx(0x1FFFFFFF, 14f)
             setPadding(px(14f), px(12f), px(14f), px(12f))
             textCursorDrawable = GradientDrawable().apply {
@@ -330,7 +335,12 @@ class OverlayController(
             typeface = Typeface.DEFAULT_BOLD
             setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15f)
             setTextColor(if (filled) INK else PRIMARY)
-            background = roundPx(if (filled) ORANGE else 0x26FFFFFF, 14f)
+            background = if (filled) {
+                GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(AMBER, ORANGE, FLAME))
+                    .apply { cornerRadius = px(14f).toFloat() }
+            } else {
+                roundPx(0x26FFFFFF, 14f)
+            }
             layoutParams = LinearLayout.LayoutParams(0, px(48f), 1f).apply {
                 if (filled) marginStart = px(10f)
             }
@@ -356,7 +366,7 @@ class OverlayController(
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xFA292927.toInt(), 0xFA151514.toInt())
+                GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xFA1D2B49.toInt(), 0xFA0A1329.toInt())
             ).apply {
                 cornerRadius = px(24f).toFloat()
                 setStroke(px(1f).coerceAtLeast(1), 0x33FFFFFF)
@@ -448,9 +458,21 @@ class OverlayController(
             setStroke(dp(1f).coerceAtLeast(1), 0x33FFFFFF)
         }
 
-    /** Sfondo "vetro scuro" con bordo sottile, usato da barra e pannello. */
+    /** Riquadro con la sfumatura arancione dell'icona (ambra → arancio → rosso). */
+    private fun orangeGrad(radiusDp: Float): GradientDrawable =
+        GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(AMBER, ORANGE, FLAME)).apply {
+            cornerRadius = radiusDp * u
+        }
+
+    private fun orangeCircle(): GradientDrawable =
+        GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(AMBER, ORANGE, FLAME)).apply {
+            shape = GradientDrawable.OVAL
+            setStroke(dp(1f).coerceAtLeast(1), 0x33FFFFFF)
+        }
+
+    /** Sfondo "vetro blu notte" con bordo sottile, usato da barra e pannello. */
     private fun glass(radiusDp: Float): GradientDrawable =
-        GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xF2292927.toInt(), 0xF2151514.toInt())).apply {
+        GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(NAVY_HI, NAVY_LO)).apply {
             cornerRadius = radiusDp * u
             setStroke(dp(1f).coerceAtLeast(1), 0x33FFFFFF)
         }
@@ -465,7 +487,7 @@ class OverlayController(
 
     /** Stato "selezionato": riquadro arancione con contenuto scuro. */
     private fun select(v: View, on: Boolean, radiusDp: Float = 16f) {
-        v.background = if (on) round(ORANGE, radiusDp) else null
+        v.background = if (on) orangeGrad(radiusDp) else null
         applyInk(v, if (on) INK else PRIMARY)
     }
 
@@ -644,10 +666,9 @@ class OverlayController(
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             val p = dp(14f)
             setPadding(p, p, p, p)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(REC_RED)
-            }
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR, intArrayOf(0xFFFF6B5C.toInt(), REC_RED, 0xFFB3141C.toInt())
+            ).apply { shape = GradientDrawable.OVAL }
             layoutParams = LinearLayout.LayoutParams(dp(48f), dp(48f)).apply { setMargins(0, dp(6f), 0, dp(2f)) }
             setOnClickListener {
                 pop(this)
@@ -665,14 +686,14 @@ class OverlayController(
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             val p = dp(15f)
             setPadding(p, p, p, p)
-            background = circle(0xF2262624.toInt())
+            background = circle(NAVY_HI)
             layoutParams = FrameLayout.LayoutParams(dp(BUBBLE), dp(BUBBLE))
         }
         bubbleDot = View(ctx).apply {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(REC_RED)
-                setStroke(dp(2f).coerceAtLeast(1), 0xFF151514.toInt())
+                setStroke(dp(2f).coerceAtLeast(1), 0xFF0A1329.toInt())
             }
         }
         bubble = FrameLayout(ctx).apply {
@@ -853,7 +874,7 @@ class OverlayController(
         private val path = Path()
 
         init {
-            background = round(0xFF4A4A47.toInt(), 16f)
+            background = round(0xFF3A4766.toInt(), 16f)
         }
 
         override fun onDraw(canvas: Canvas) {
@@ -1109,7 +1130,7 @@ class OverlayController(
         handleArrow.rotation = if (dockedLeft) 0f else 180f
         val r = px(15f).toFloat()
         handle.background = GradientDrawable().apply {
-            setColor(0xFF262624.toInt())
+            setColor(0xFF14213D.toInt())
             cornerRadii = if (dockedLeft) floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f) else floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
             setStroke(px(1f).coerceAtLeast(1), 0x44FFFFFF)
         }
