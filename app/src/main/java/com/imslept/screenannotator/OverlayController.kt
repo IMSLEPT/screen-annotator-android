@@ -68,10 +68,9 @@ class OverlayController(
         const val EST_PANEL_H = 480f
         const val BUBBLE = 58f
 
-        /** Zona invisibile al bordo dello schermo che riapre la barra (dp reali, non scalati). */
-        const val GHOST_W = 34f
-        const val GHOST_H = 150f
-        const val HIDE_DELAY = 4000L
+        /** Linguetta a tendina al bordo dello schermo che riapre la barra (dp reali, non scalati). */
+        const val HANDLE_W = 30f
+        const val HANDLE_H = 84f
 
         /**
          * Da Android 12 i tocchi attraverso un overlay "non toccabile" passano solo se l'opacita'
@@ -102,7 +101,9 @@ class OverlayController(
     private lateinit var bubble: FrameLayout
     private lateinit var bubbleDisc: ImageView
     private lateinit var bubbleDot: View
-    private lateinit var ghost: View
+    private lateinit var handle: FrameLayout
+    private lateinit var handleArrow: ImageView
+    private lateinit var minimizeBtn: ImageView
 
     private lateinit var headerDot: View
     private lateinit var timerText: TextView
@@ -141,7 +142,7 @@ class OverlayController(
     private var textWindow: View? = null
     private var shown = false
 
-    /** Barra invisibile nel video: si chiude da sola e al suo posto resta una zona trasparente al bordo. */
+    /** Modalita' tendina: la barra si riduce a una linguetta quasi invisibile al bordo dello schermo. */
     private val ghostMode = Prefs.hideBar
 
     val isDrawing: Boolean get() = drawing
@@ -178,10 +179,6 @@ class OverlayController(
         buildToolbar()
         addToolbarWindow()
         drawingView.onTextRequest = { x, y -> requestText(x, y) }
-        drawingView.onStrokeStart = {
-            // appena inizi a disegnare la barra aperta si richiude presto
-            if (ghostMode && expanded && !panelOpen) scheduleAutoHide(1200)
-        }
         setDrawing(false)
         selectTool(Prefs.lastTool, enableDrawing = false)
 
@@ -192,7 +189,6 @@ class OverlayController(
 
         root.alpha = 0f
         root.animate().alpha(1f).setDuration(240).start()
-        scheduleAutoHide()
     }
 
     /** Apre/chiude la barra (usato dal pulsante «Barra» della notifica). */
@@ -428,7 +424,6 @@ class OverlayController(
         if (shown && text != null && p != null && text.isNotBlank()) {
             drawingView.addText(p.x, p.y, text.trim())
         }
-        scheduleAutoHide()
     }
 
     // ------------------------------------------------------------------ Elementi grafici
@@ -630,7 +625,8 @@ class OverlayController(
         bar.addView(divider())
 
         // --- nascondi + stop
-        bar.addView(iconButton(R.drawable.ic_minimize) { setExpanded(false) })
+        minimizeBtn = iconButton(R.drawable.ic_chevron_right) { setExpanded(false) }
+        bar.addView(minimizeBtn)
         val stop = ImageView(ctx).apply {
             setImageResource(R.drawable.ic_stop)
             imageTintList = ColorStateList.valueOf(PRIMARY)
@@ -676,19 +672,22 @@ class OverlayController(
         }
         attachDrag(bubble, onClick = { setExpanded(true) }, onDrop = { snapBubble() })
 
-        // --- zona invisibile (barra nascosta): trasparente, quindi non compare nel video
-        ghost = View(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(px(GHOST_W), px(GHOST_H))
-            contentDescription = "Apri la barra degli strumenti"
-            setOnClickListener { setExpanded(true) }
+        // --- linguetta a tendina (barra ridotta): piccola, semitrasparente, con la freccia per riaprire
+        handleArrow = ImageView(ctx).apply {
+            setImageResource(R.drawable.ic_chevron_right)
+            imageTintList = ColorStateList.valueOf(PRIMARY)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            layoutParams = FrameLayout.LayoutParams(px(22f), px(22f), Gravity.CENTER)
         }
+        handle = FrameLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(px(HANDLE_W), px(HANDLE_H))
+            alpha = 0.4f
+            contentDescription = "Apri la barra degli strumenti"
+            addView(handleArrow)
+        }
+        attachDrag(handle, onClick = { setExpanded(true) }, onDrop = { snapHandle() })
 
-        root = object : LinearLayout(ctx) {
-            override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-                if (ev.actionMasked == MotionEvent.ACTION_DOWN) onBarTouched()
-                return super.dispatchTouchEvent(ev)
-            }
-        }.apply {
+        root = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.TOP
         }
@@ -960,7 +959,7 @@ class OverlayController(
     private fun layoutRoot() {
         root.removeAllViews()
         if (!expanded) {
-            root.addView(if (ghostMode) ghost else bubble)
+            root.addView(if (ghostMode) handle else bubble)
             return
         }
         val gap = dp(8f)
@@ -977,6 +976,7 @@ class OverlayController(
 
     private fun updateBar() {
         layoutRoot()
+        refreshArrows()
         try { wm.updateViewLayout(root, barParams) } catch (_: Exception) {}
     }
 
@@ -1004,26 +1004,27 @@ class OverlayController(
     private fun setExpanded(value: Boolean) {
         if (!value && panelOpen) togglePanel()
         handler.removeCallbacks(peekRun)
-        handler.removeCallbacks(autoHideRun)
         peeking = false
         root.animate().cancel()
         root.animate().alpha(0f).scaleX(0.8f).scaleY(0.8f).setDuration(100).withEndAction {
             if (!shown) return@withEndAction
             val (sw, sh) = screenSize()
             if (value) {
+                val handleCenter = barParams.y + px(HANDLE_H) / 2
                 expanded = true
                 val margin = dp(10f)
                 barParams.x = if (dockedLeft) margin else sw - dp(BAR_W) - margin
                 val maxY = max(dp(24f), sh - dp(EST_BAR_H) - dp(24f))
-                barParams.y = barParams.y.coerceIn(dp(24f), maxY)
+                // la barra si apre in modo che la freccia cada dove c'era la linguetta
+                val y = if (ghostMode) handleCenter - arrowCenterInBar() else barParams.y
+                barParams.y = y.coerceIn(dp(24f), maxY)
             } else if (ghostMode) {
+                val center = barParams.y + arrowCenterInBar()
                 expanded = false
-                val gw = px(GHOST_W)
-                val gh = px(GHOST_H)
                 dockedLeft = barParams.x + dp(BAR_W) / 2 < sw / 2
-                barParams.x = if (dockedLeft) 0 else sw - gw
-                val minY = px(40f)
-                barParams.y = (barParams.y + dp(60f)).coerceIn(minY, max(minY, sh - gh - minY))
+                barParams.x = if (dockedLeft) 0 else sw - px(HANDLE_W)
+                val minY = px(24f)
+                barParams.y = (center - px(HANDLE_H) / 2).coerceIn(minY, max(minY, sh - px(HANDLE_H) - minY))
             } else {
                 expanded = false
                 val size = dp(BUBBLE)
@@ -1036,9 +1037,46 @@ class OverlayController(
             root.scaleY = 0.8f
             root.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(170)
                 .setInterpolator(OvershootInterpolator(1.1f))
-                .withEndAction { if (expanded) scheduleAutoHide() else if (!ghostMode) schedulePeek() }
+                .withEndAction { if (!expanded && !ghostMode) schedulePeek() }
                 .start()
         }.start()
+    }
+
+    /** Distanza dal bordo alto della barra al centro del pulsante con la freccia. */
+    private fun arrowCenterInBar(): Int {
+        val top = if (minimizeBtn.top > 0) minimizeBtn.top else dp(EST_BAR_H) - dp(105f)
+        val h = if (minimizeBtn.height > 0) minimizeBtn.height else dp(48f)
+        return top + h / 2
+    }
+
+    /** Frecce e linguetta sempre rivolte dal lato giusto, a seconda del bordo a cui sono agganciate. */
+    private fun refreshArrows() {
+        if (!::barParams.isInitialized || !::handle.isInitialized) return
+        val (sw, _) = screenSize()
+        if (expanded) {
+            val barX = barParams.x + if (panelOpen && panelOnLeft) dp(PANEL_W) + dp(8f) else 0
+            dockedLeft = barX + dp(BAR_W) / 2 < sw / 2
+        }
+        // barra a destra: la freccia punta a destra (verso il bordo) per ridurla; a sinistra il contrario
+        minimizeBtn.rotation = if (dockedLeft) 180f else 0f
+        // linguetta: la freccia punta verso l'interno dello schermo
+        handleArrow.rotation = if (dockedLeft) 0f else 180f
+        val r = px(15f).toFloat()
+        handle.background = GradientDrawable().apply {
+            setColor(0xFF262624.toInt())
+            cornerRadii = if (dockedLeft) floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f) else floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
+            setStroke(px(1f).coerceAtLeast(1), 0x44FFFFFF)
+        }
+    }
+
+    private fun snapHandle() {
+        val (sw, sh) = screenSize()
+        dockedLeft = barParams.x + px(HANDLE_W) / 2 < sw / 2
+        refreshArrows()
+        val tx = if (dockedLeft) 0 else sw - px(HANDLE_W)
+        val minY = px(24f)
+        val ty = barParams.y.coerceIn(minY, max(minY, sh - px(HANDLE_H) - minY))
+        animateTo(tx, ty)
     }
 
     private fun addToolbarWindow() {
@@ -1052,8 +1090,8 @@ class OverlayController(
         var y = if (corner >= 2) max(margin, sh - barH - dp(60f)) else dp(60f)
         if (!expanded) {
             // barra nascosta: parto subito dalla zona invisibile sul bordo
-            x = if (dockedLeft) 0 else sw - px(GHOST_W)
-            y = if (corner >= 2) sh - px(GHOST_H) - px(160f) else px(120f)
+            x = if (dockedLeft) 0 else sw - px(HANDLE_W)
+            y = if (corner >= 2) sh - px(HANDLE_H) - px(220f) else px(220f)
         }
         barParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -1071,30 +1109,10 @@ class OverlayController(
             title = "ScreenAnnotator-toolbar"
         }
         wm.addView(root, barParams)
+        refreshArrows()
     }
 
     // ------------------------------------------------------------------ Bolla: aggancio al bordo e "sbirciata"
-
-    // ------------------------------------------------------------------ Barra che si nasconde da sola
-
-    private val autoHideRun = Runnable {
-        if (!shown || !expanded) return@Runnable
-        if (textWindow != null) {
-            scheduleAutoHide()
-            return@Runnable
-        }
-        setExpanded(false)
-    }
-
-    /** Con la barra «invisibile nel video» la richiudo dopo un po' che non la usi. */
-    private fun scheduleAutoHide(ms: Long = HIDE_DELAY) {
-        handler.removeCallbacks(autoHideRun)
-        if (ghostMode && expanded && shown) handler.postDelayed(autoHideRun, ms)
-    }
-
-    private fun onBarTouched() {
-        if (expanded) scheduleAutoHide(if (panelOpen) 10_000L else HIDE_DELAY)
-    }
 
     private val peekRun = Runnable {
         if (!shown || expanded) return@Runnable
@@ -1183,8 +1201,8 @@ class OverlayController(
                         try { wm.updateViewLayout(root, barParams) } catch (_: Exception) {}
                     }
                 }
-                MotionEvent.ACTION_UP -> if (!moved) onClick?.invoke() else onDrop?.invoke()
-                MotionEvent.ACTION_CANCEL -> if (moved) onDrop?.invoke()
+                MotionEvent.ACTION_UP -> if (!moved) onClick?.invoke() else { onDrop?.invoke(); refreshArrows() }
+                MotionEvent.ACTION_CANCEL -> if (moved) { onDrop?.invoke(); refreshArrows() }
             }
             true
         }

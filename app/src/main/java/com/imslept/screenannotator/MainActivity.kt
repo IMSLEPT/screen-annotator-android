@@ -310,7 +310,7 @@ class MainActivity : AppCompatActivity() {
                 ui.sectionHeader(R.drawable.ic_info, "Come funziona", "Quattro passi"),
                 stepRow(1, "Tocca il cerchio e scegli «Intero schermo» nella finestra di sistema.")
                     .apply { layoutParams = ui.lp(16) },
-                stepRow(2, "Apri qualsiasi app. La barra è invisibile nel video: per aprirla tocca il bordo dello schermo dal lato scelto (o «Barra» nella notifica).")
+                stepRow(2, "Apri qualsiasi app. Con la freccia della barra la riduci a una linguetta quasi invisibile al bordo; toccala per riaprire la barra (o usa «Barra» nella notifica).")
                     .apply { layoutParams = ui.lp(14) },
                 stepRow(3, "Temporanei: il tratto svanisce da solo. Permanenti: restano finché non li cancelli.")
                     .apply { layoutParams = ui.lp(14) },

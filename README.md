@@ -37,7 +37,7 @@ Con il permesso, l'app attiva "Mostra tocchi" da sola durante la registrazione. 
 
 ## Limiti noti
 
-- La barra flottante **non puo' essere esclusa dal video** (Android registra ogni finestra non protetta). Con l'opzione "Nascondi la barra dal video" (attiva di default) si chiude da sola dopo qualche secondo e resta solo una zona trasparente al bordo dello schermo per riaprirla; mentre e' aperta compare nel video. Il pannello del testo e la tastiera compaiono nel video finche' li usi.
+- La barra flottante **non puo' essere esclusa dal video** (Android registra ogni finestra non protetta). Con l'opzione "Barra a tendina" (attiva di default) la freccia riduce la barra a una linguetta quasi invisibile al bordo dello schermo, che si tocca per riaprirla; mentre la barra e' aperta compare nel video. Il pannello del testo e la tastiera compaiono nel video finche' li usi.
 - Per le regole di Android 12+ gli overlay che lasciano passare i tocchi possono avere al massimo l'80% di opacita': i disegni non arrivano al 100%.
 - L'orientamento e' quello dello schermo all'avvio; non ruotare il telefono durante la registrazione.
 - La gomma cancella l'intero tratto toccato e non e' annullabile.

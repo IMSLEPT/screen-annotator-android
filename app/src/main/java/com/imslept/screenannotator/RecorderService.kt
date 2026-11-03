@@ -251,7 +251,7 @@ class RecorderService : Service() {
         val side = if (Prefs.toolbarCorner % 2 == 1) "destro" else "sinistro"
         val status = buildString {
             append(if (drawing) "Disegno attivo" else "Tocco attivo")
-            if (Prefs.hideBar) append(" · barra nascosta: tocca il bordo $side dello schermo")
+            if (Prefs.hideBar) append(" · linguetta della barra sul bordo $side")
         }
         val b = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)

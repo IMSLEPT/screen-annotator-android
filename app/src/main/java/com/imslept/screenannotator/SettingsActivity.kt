@@ -235,8 +235,8 @@ class SettingsActivity : AppCompatActivity() {
         val card = section(R.drawable.ic_overlay, "Barra flottante", "Dove compare mentre registri")
         card.addView(
             ui.switchRow(
-                "Nascondi la barra dal video",
-                "Si chiude da sola e diventa invisibile. Per riaprirla tocca il bordo dello schermo o «Barra» nella notifica.",
+                "Barra a tendina",
+                "Con la freccia la barra si riduce a una linguetta quasi invisibile al bordo dello schermo; tocca la linguetta per riaprirla.",
                 Prefs.hideBar
             ) { Prefs.hideBar = it },
             ui.lp(16)
@@ -248,7 +248,7 @@ class SettingsActivity : AppCompatActivity() {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(ui.text("Posizione", 16f, bold = true))
-                addView(ui.text("Tocca l'angolo del telefono dove vuoi la barra (e dove tocchi per riaprirla se è nascosta).", 13f, R.color.ink_muted), ui.lp(4))
+                addView(ui.text("Tocca l'angolo del telefono dove vuoi la barra (e dove compare la linguetta).", 13f, R.color.ink_muted), ui.lp(4))
                 addView(
                     ui.text("Durante la registrazione puoi trascinarla ovunque o ridurla a una bolla.", 13f, R.color.ink_muted),
                     ui.lp(10)
