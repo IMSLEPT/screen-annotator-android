@@ -141,6 +141,7 @@ class OverlayController(
     private var pendingText: PointF? = null
     private var textWindow: View? = null
     private var shown = false
+    private var transitioning = false
 
     /** Modalita' tendina: la barra si riduce a una linguetta quasi invisibile al bordo dello schermo. */
     private val ghostMode = Prefs.hideBar
@@ -179,6 +180,8 @@ class OverlayController(
         buildToolbar()
         addToolbarWindow()
         drawingView.onTextRequest = { x, y -> requestText(x, y) }
+        // la gomma come strumento iniziale confonde: si riparte dalla penna
+        if (Prefs.lastTool == Tool.ERASER) Prefs.lastTool = Tool.PEN
         setDrawing(false)
         selectTool(Prefs.lastTool, enableDrawing = false)
 
@@ -201,7 +204,8 @@ class OverlayController(
         if (!shown) return
         shown = false
         handler.removeCallbacksAndMessages(null)
-        for (a in anims) a.cancel()
+        moveAnim?.cancel()
+        for (a in ArrayList(anims)) a.cancel()
         anims.clear()
         closeText(null)
         try { root.animate().cancel() } catch (_: Exception) {}
@@ -274,6 +278,7 @@ class OverlayController(
             drawToggleIcon.setImageResource(if (on) R.drawable.ic_pencil else R.drawable.ic_touch)
             drawToggleLabel.text = if (on) "Disegno" else "Tocco"
             select(drawToggle, on)
+            refreshTools()
             bubbleDisc.setImageResource(if (on) R.drawable.ic_pencil else R.drawable.ic_touch)
             bubbleDisc.imageTintList = ColorStateList.valueOf(if (on) INK else PRIMARY)
             bubbleDisc.background = circle(if (on) ORANGE else 0xF2262624.toInt())
@@ -600,7 +605,11 @@ class OverlayController(
             Tool.ERASER to R.drawable.ic_eraser,
         )
         for ((tool, res) in tools) {
-            val b = iconButton(res) { selectTool(tool, enableDrawing = true) }
+            val b = iconButton(res) {
+                // toccare lo strumento gia' attivo spegne il disegno e restituisce i tocchi alle app
+                if (drawing && Prefs.lastTool == tool) setDrawing(false)
+                else selectTool(tool, enableDrawing = true)
+            }
             toolButtons[tool] = b
             bar.addView(b)
         }
@@ -888,9 +897,28 @@ class OverlayController(
 
     private fun selectTool(tool: Tool, enableDrawing: Boolean) {
         Prefs.lastTool = tool
-        for ((t, b) in toolButtons) select(b, t == tool)
         if (enableDrawing && !drawing) setDrawing(true)
+        refreshTools()
         refreshPanel()
+    }
+
+    /**
+     * Strumento scelto: pieno arancione quando il disegno e' attivo, solo contornato quando sei
+     * in modalita' Tocco (cosi' si capisce che in quel momento non stai disegnando).
+     */
+    private fun refreshTools() {
+        val cur = Prefs.lastTool
+        for ((t, b) in toolButtons) {
+            if (t == cur && !drawing) {
+                b.background = GradientDrawable().apply {
+                    cornerRadius = 16f * u
+                    setStroke(dp(2f).coerceAtLeast(1), ORANGE)
+                }
+                applyInk(b, ORANGE)
+            } else {
+                select(b, t == cur)
+            }
+        }
     }
 
     private fun refreshPanel() {
@@ -996,25 +1024,33 @@ class OverlayController(
             if (panelOnLeft) barParams.x += extra
         }
         styleButton.background = if (panelOpen) round(0x33FFFFFF, 16f) else null
-        barParams.x = barParams.x.coerceIn(0, max(0, sw - barW))
+        val totalW = barW + if (panelOpen) extra else 0
+        barParams.x = barParams.x.coerceIn(0, max(0, sw - totalW))
         updateBar()
     }
 
     /** Mostra la barra completa (true) oppure la riduce a una bolla (false), con una piccola animazione. */
     private fun setExpanded(value: Boolean) {
+        // ignora tocchi ripetuti mentre l'animazione e' in corso (evitava stati a meta')
+        if (transitioning || value == expanded) return
+        transitioning = true
+        handler.postDelayed(unlockRun, 700) // sicurezza: se l'animazione viene interrotta non resto bloccato
         if (!value && panelOpen) togglePanel()
         handler.removeCallbacks(peekRun)
         peeking = false
         root.animate().cancel()
         root.animate().alpha(0f).scaleX(0.8f).scaleY(0.8f).setDuration(100).withEndAction {
-            if (!shown) return@withEndAction
+            if (!shown) {
+                transitioning = false
+                return@withEndAction
+            }
             val (sw, sh) = screenSize()
             if (value) {
                 val handleCenter = barParams.y + px(HANDLE_H) / 2
                 expanded = true
                 val margin = dp(10f)
                 barParams.x = if (dockedLeft) margin else sw - dp(BAR_W) - margin
-                val maxY = max(dp(24f), sh - dp(EST_BAR_H) - dp(24f))
+                val maxY = max(dp(24f), sh - barHeight() - dp(24f))
                 // la barra si apre in modo che la freccia cada dove c'era la linguetta
                 val y = if (ghostMode) handleCenter - arrowCenterInBar() else barParams.y
                 barParams.y = y.coerceIn(dp(24f), maxY)
@@ -1037,10 +1073,18 @@ class OverlayController(
             root.scaleY = 0.8f
             root.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(170)
                 .setInterpolator(OvershootInterpolator(1.1f))
-                .withEndAction { if (!expanded && !ghostMode) schedulePeek() }
+                .withEndAction {
+                    transitioning = false
+                    if (!expanded && !ghostMode) schedulePeek()
+                }
                 .start()
         }.start()
     }
+
+    private val unlockRun = Runnable { transitioning = false }
+
+    /** Altezza reale della barra se gia' misurata, altrimenti la stima. */
+    private fun barHeight(): Int = if (bar.height > 0) bar.height else dp(EST_BAR_H)
 
     /** Distanza dal bordo alto della barra al centro del pulsante con la freccia. */
     private fun arrowCenterInBar(): Int {
@@ -1151,7 +1195,10 @@ class OverlayController(
         animateTo(tx, ty) { schedulePeek() }
     }
 
+    private var moveAnim: ValueAnimator? = null
+
     private fun animateTo(tx: Int, ty: Int, end: (() -> Unit)? = null) {
+        moveAnim?.cancel() // un solo spostamento alla volta, altrimenti la barra "trema"
         val sx = barParams.x
         val sy = barParams.y
         val a = ValueAnimator.ofFloat(0f, 1f).apply {
@@ -1164,12 +1211,19 @@ class OverlayController(
                 try { wm.updateViewLayout(root, barParams) } catch (_: Exception) {}
             }
             addListener(object : AnimatorListenerAdapter() {
+                private var cancelled = false
+                override fun onAnimationCancel(animation: Animator) {
+                    cancelled = true
+                }
+
                 override fun onAnimationEnd(animation: Animator) {
-                    end?.invoke()
+                    anims.remove(animation)
+                    if (!cancelled && shown) end?.invoke()
                 }
             })
         }
         anims.add(a)
+        moveAnim = a
         a.start()
     }
 
@@ -1193,7 +1247,13 @@ class OverlayController(
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (e.rawX - downX).toInt()
                     val dy = (e.rawY - downY).toInt()
-                    if (abs(dx) > touchSlop || abs(dy) > touchSlop) moved = true
+                    if (!moved && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
+                        moved = true
+                        handler.removeCallbacks(peekRun)
+                        moveAnim?.cancel()
+                        startX = barParams.x - dx
+                        startY = barParams.y - dy
+                    }
                     if (moved) {
                         val (sw, sh) = screenSize()
                         barParams.x = (startX + dx).coerceIn(0, max(0, sw - max(root.width, 1)))

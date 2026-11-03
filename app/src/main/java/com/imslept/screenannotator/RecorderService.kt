@@ -67,8 +67,9 @@ class RecorderService : Service() {
         when (intent?.action) {
             ACTION_START -> startRecording(intent)
             ACTION_STOP -> stopRecording()
-            ACTION_TOGGLE_DRAW -> overlay?.toggleDrawing()
-            ACTION_TOGGLE_BAR -> overlay?.toggleBar()
+            // dalla notifica: se la registrazione non c'e' piu' il servizio non deve restare acceso
+            ACTION_TOGGLE_DRAW -> if (recording) overlay?.toggleDrawing() else if (!stopping) stopSelf()
+            ACTION_TOGGLE_BAR -> if (recording) overlay?.toggleBar() else if (!stopping) stopSelf()
             else -> if (!recording) stopSelf()
         }
         return START_NOT_STICKY

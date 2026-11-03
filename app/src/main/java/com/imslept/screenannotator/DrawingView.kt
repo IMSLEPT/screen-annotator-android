@@ -53,8 +53,21 @@ class DrawingView(context: Context) : View(context) {
 
     private val density = resources.displayMetrics.density
     private val strokes = ArrayList<Stroke>()
-    private val redoStack = ArrayList<Stroke>()
     private var current: Stroke? = null
+
+    /**
+     * Cronologia delle operazioni per Annulla/Ripeti: aggiunta di un tratto oppure rimozione
+     * (gomma o cancella tutto), cosi' anche gomma e cestino si possono annullare.
+     */
+    private sealed class Op {
+        class Add(val s: Stroke) : Op()
+        /** Tratti rimossi, nell'ordine di rimozione, con la posizione che avevano. */
+        class Remove(val items: ArrayList<Pair<Int, Stroke>>) : Op()
+    }
+
+    private val history = ArrayList<Op>()
+    private val redoOps = ArrayList<Op>()
+    private var eraseOp: Op.Remove? = null
 
     private var touching = false
     private var touchX = 0f
@@ -81,30 +94,65 @@ class DrawingView(context: Context) : View(context) {
 
     // ------------------------------------------------------------------ API pubblica
 
+    /** I tratti temporanei rimessi sullo schermo ripartono con la dissolvenza da adesso. */
+    private fun restart(s: Stroke) {
+        if (!s.temporary) return
+        val now = SystemClock.uptimeMillis()
+        val delta = now - (s.points.lastOrNull()?.t ?: now)
+        for (p in s.points) p.t += delta
+        s.endTime = now
+    }
+
+    private fun push(op: Op) {
+        history.add(op)
+        redoOps.clear()
+        if (history.size > 300) history.removeAt(0)
+    }
+
     fun undo() {
-        if (strokes.isEmpty()) return
-        redoStack.add(strokes.removeAt(strokes.size - 1))
-        invalidate()
+        while (history.isNotEmpty()) {
+            when (val op = history.removeAt(history.size - 1)) {
+                is Op.Add -> {
+                    // un tratto temporaneo gia' svanito non conta: passo al precedente
+                    if (strokes.remove(op.s)) {
+                        redoOps.add(op)
+                        invalidate()
+                        return
+                    }
+                }
+                is Op.Remove -> {
+                    for ((idx, st) in op.items.asReversed()) {
+                        restart(st)
+                        strokes.add(idx.coerceIn(0, strokes.size), st)
+                    }
+                    redoOps.add(op)
+                    invalidate()
+                    return
+                }
+            }
+        }
     }
 
     fun redo() {
-        if (redoStack.isEmpty()) return
-        val s = redoStack.removeAt(redoStack.size - 1)
-        if (s.temporary) {
-            // riparte la dissolvenza da adesso, mantenendo la forma temporale del tratto
-            val now = SystemClock.uptimeMillis()
-            val delta = now - (s.points.lastOrNull()?.t ?: now)
-            for (p in s.points) p.t += delta
-            s.endTime = now
+        if (redoOps.isEmpty()) return
+        when (val op = redoOps.removeAt(redoOps.size - 1)) {
+            is Op.Add -> {
+                restart(op.s)
+                strokes.add(op.s)
+            }
+            is Op.Remove -> for ((_, st) in op.items) strokes.remove(st)
         }
-        strokes.add(s)
+        history.add(op)
         invalidate()
     }
 
     fun clearAll() {
-        strokes.clear()
-        redoStack.clear()
         current = null
+        if (strokes.isEmpty()) return
+        val items = ArrayList<Pair<Int, Stroke>>()
+        for (i in strokes.indices.reversed()) items.add(i to strokes[i])
+        strokes.clear()
+        push(Op.Remove(items))
         invalidate()
     }
 
@@ -127,7 +175,7 @@ class DrawingView(context: Context) : View(context) {
         for (l in lines) w = max(w, tp.measureText(l))
         s.bounds.set(x, y - sizePx, x + w, y - sizePx + tp.fontSpacing * lines.size)
         strokes.add(s)
-        redoStack.clear()
+        push(Op.Add(s))
         invalidate()
     }
 
@@ -144,7 +192,10 @@ class DrawingView(context: Context) : View(context) {
                 } catch (_: Exception) { false }
                 onStrokeStart?.invoke()
                 when (val tool = Prefs.lastTool) {
-                    Tool.ERASER -> eraseAt(e.x, e.y)
+                    Tool.ERASER -> {
+                        eraseOp = Op.Remove(ArrayList())
+                        eraseAt(e.x, e.y)
+                    }
                     Tool.TEXT -> onTextRequest?.invoke(e.x, e.y)
                     else -> startStroke(tool, e.x, e.y)
                 }
@@ -162,6 +213,8 @@ class DrawingView(context: Context) : View(context) {
                 touching = false
                 current?.let { finish(it) }
                 current = null
+                eraseOp?.let { if (it.items.isNotEmpty()) push(it) }
+                eraseOp = null
                 invalidate()
             }
         }
@@ -176,7 +229,7 @@ class DrawingView(context: Context) : View(context) {
         s.points.add(Pt(x, y, SystemClock.uptimeMillis()))
         s.bounds.set(x, y, x, y)
         strokes.add(s)
-        redoStack.clear()
+        push(Op.Add(s))
         current = s
     }
 
@@ -206,7 +259,12 @@ class DrawingView(context: Context) : View(context) {
         if (s.tool == Tool.SHAPE) {
             val a = s.points[0]
             val b = s.points.getOrNull(1)
-            if (b == null || hypot(b.x - a.x, b.y - a.y) < 12f) strokes.remove(s)
+            if (b == null || hypot(b.x - a.x, b.y - a.y) < 12f) {
+                // forma troppo piccola (un tocco): la scarto anche dalla cronologia
+                strokes.remove(s)
+                val last = history.lastOrNull()
+                if (last is Op.Add && last.s === s) history.removeAt(history.size - 1)
+            }
         }
     }
 
@@ -214,9 +272,15 @@ class DrawingView(context: Context) : View(context) {
 
     private fun eraseAt(x: Float, y: Float) {
         val r = Prefs.width(Tool.ERASER) * density
-        val it = strokes.iterator()
-        while (it.hasNext()) {
-            if (hits(it.next(), x, y, r)) it.remove()
+        var i = 0
+        while (i < strokes.size) {
+            val st = strokes[i]
+            if (hits(st, x, y, r)) {
+                strokes.removeAt(i)
+                eraseOp?.items?.add(i to st)
+            } else {
+                i++
+            }
         }
     }
 
@@ -325,7 +389,8 @@ class DrawingView(context: Context) : View(context) {
                 else -> drawFreehand(canvas, s, wholeFactor(s, now, hold, fade))
             }
         }
-        if (touching && Prefs.showTouches && !systemTouches) drawTouch(canvas)
+        if (touching && Prefs.lastTool == Tool.ERASER) drawEraser(canvas)
+        else if (touching && Prefs.showTouches && !systemTouches) drawTouch(canvas)
         if (animate) postInvalidateOnAnimation()
     }
 
@@ -448,6 +513,26 @@ class DrawingView(context: Context) : View(context) {
         for (i in lines.indices) {
             canvas.drawText(lines[i], pt.x, pt.y + i * p.fontSpacing, p)
         }
+    }
+
+    /** Anteprima della gomma: un anello grande quanto l'area che cancella. */
+    private fun drawEraser(canvas: Canvas) {
+        val r = Prefs.width(Tool.ERASER) * density
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.style = Paint.Style.FILL
+        paint.color = Color.WHITE
+        paint.alpha = 50
+        canvas.drawCircle(touchX, touchY, r, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 3f * density
+        paint.color = Color.BLACK
+        paint.alpha = 120
+        canvas.drawCircle(touchX, touchY, r, paint)
+        paint.strokeWidth = 1.5f * density
+        paint.color = Color.WHITE
+        paint.alpha = 230
+        canvas.drawCircle(touchX, touchY, r, paint)
     }
 
     private fun drawTouch(canvas: Canvas) {

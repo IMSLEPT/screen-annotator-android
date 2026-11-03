@@ -62,12 +62,21 @@ class MainActivity : AppCompatActivity() {
     private lateinit var secureButtons: View
     private var pulse: ObjectAnimator? = null
 
+    /** true mentre e' aperta la richiesta di registrazione: evita doppie finestre con doppio tocco. */
+    private var requesting = false
+
     private val stateListener: () -> Unit = { runOnUiThread { refresh() } }
 
     private val micLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (!granted) {
-                Toast.makeText(this, "Senza il permesso il microfono non si può registrare", Toast.LENGTH_LONG).show()
+                if (!shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) {
+                    // negato per sempre: Android non mostra piu' la richiesta, si attiva dalle impostazioni
+                    Toast.makeText(this, "Attiva il microfono in Autorizzazioni → Microfono", Toast.LENGTH_LONG).show()
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                } else {
+                    Toast.makeText(this, "Senza il permesso il microfono non si può registrare", Toast.LENGTH_LONG).show()
+                }
             }
             refresh()
         }
@@ -75,11 +84,13 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
             // Anche senza microfono o notifiche si puo' registrare: l'audio viene semplicemente escluso
+            requesting = false
             requestProjection()
         }
 
     private val projectionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+            requesting = false
             val data = res.data
             if (res.resultCode == RESULT_OK && data != null) {
                 ContextCompat.startForegroundService(
@@ -485,6 +496,7 @@ class MainActivity : AppCompatActivity() {
             startService(RecorderService.stopIntent(this))
             return
         }
+        if (requesting) return
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "Prima attiva «Mostra sopra altre app»", Toast.LENGTH_LONG).show()
             scroll.post { scroll.smoothScrollTo(0, setupCard.top) }
@@ -498,7 +510,12 @@ class MainActivity : AppCompatActivity() {
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) needed.add(Manifest.permission.POST_NOTIFICATIONS)
 
-        if (needed.isEmpty()) requestProjection() else permissionLauncher.launch(needed.toTypedArray())
+        if (needed.isEmpty()) {
+            requestProjection()
+        } else {
+            requesting = true
+            permissionLauncher.launch(needed.toTypedArray())
+        }
     }
 
     private fun requestProjection() {
@@ -509,6 +526,12 @@ class MainActivity : AppCompatActivity() {
         } else {
             mpm.createScreenCaptureIntent()
         }
-        projectionLauncher.launch(intent)
+        requesting = true
+        try {
+            projectionLauncher.launch(intent)
+        } catch (_: Exception) {
+            requesting = false
+            Toast.makeText(this, "Impossibile avviare la registrazione", Toast.LENGTH_LONG).show()
+        }
     }
 }
