@@ -135,7 +135,8 @@ class DrawingView(context: Context) : View(context) {
 
     fun redo() {
         if (redoOps.isEmpty()) return
-        when (val op = redoOps.removeAt(redoOps.size - 1)) {
+        val op = redoOps.removeAt(redoOps.size - 1)
+        when (op) {
             is Op.Add -> {
                 restart(op.s)
                 strokes.add(op.s)
