@@ -180,6 +180,8 @@ class OverlayController(
         buildToolbar()
         addToolbarWindow()
         drawingView.onTextRequest = { x, y -> requestText(x, y) }
+        // appena inizi a disegnare il pannello delle opzioni si chiude, cosi' non copre lo schermo
+        drawingView.onStrokeStart = { if (panelOpen) togglePanel() }
         // la gomma come strumento iniziale confonde: si riparte dalla penna
         if (Prefs.lastTool == Tool.ERASER) Prefs.lastTool = Tool.PEN
         setDrawing(false)
@@ -606,8 +608,8 @@ class OverlayController(
         )
         for ((tool, res) in tools) {
             val b = iconButton(res) {
-                // toccare lo strumento gia' attivo spegne il disegno e restituisce i tocchi alle app
-                if (drawing && Prefs.lastTool == tool) setDrawing(false)
+                // ritoccare lo strumento gia' attivo apre (o chiude) colori, spessore e forme
+                if (drawing && Prefs.lastTool == tool) togglePanel()
                 else selectTool(tool, enableDrawing = true)
             }
             toolButtons[tool] = b
