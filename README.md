@@ -33,11 +33,11 @@ Android non permette a un'app normale di attivare i tocchi di sistema. Concedi i
 adb shell pm grant com.imslept.screenannotator android.permission.WRITE_SECURE_SETTINGS
 ```
 
-Poi attiva "Mostra i tocchi sullo schermo". Senza il permesso, in modalita' disegno compare comunque un cerchio sotto il dito.
+Con il permesso, l'app attiva "Mostra tocchi" da sola durante la registrazione. Senza il permesso puoi attivare "Mostra tocchi" a mano in Opzioni sviluppatore: Android lo disegna e finisce nel video. In modalita' disegno l'app mostra comunque un cerchio sotto il dito.
 
 ## Limiti noti
 
-- La barra flottante **non puo' essere esclusa con certezza dal video**: Android registra tutto cio' che e' sullo schermo. Riducila a bolla o spostala in un angolo.
+- La barra flottante **non puo' essere esclusa dal video** (Android registra ogni finestra non protetta). Con l'opzione "Nascondi la barra dal video" (attiva di default) si chiude da sola dopo qualche secondo e resta solo una zona trasparente al bordo dello schermo per riaprirla; mentre e' aperta compare nel video. Il pannello del testo e la tastiera compaiono nel video finche' li usi.
 - Per le regole di Android 12+ gli overlay che lasciano passare i tocchi possono avere al massimo l'80% di opacita': i disegni non arrivano al 100%.
 - L'orientamento e' quello dello schermo all'avvio; non ruotare il telefono durante la registrazione.
 - La gomma cancella l'intero tratto toccato e non e' annullabile.

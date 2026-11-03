@@ -66,6 +66,12 @@ class DrawingView(context: Context) : View(context) {
     /** Chiamato quando l'utente tocca con lo strumento Testo (coordinate dello schermo) */
     var onTextRequest: ((Float, Float) -> Unit)? = null
 
+    /** Chiamato quando il dito si appoggia per iniziare un gesto (serve a richiudere la barra) */
+    var onStrokeStart: (() -> Unit)? = null
+
+    /** true se Android sta gia' mostrando i tocchi di sistema: evito il doppio cerchio */
+    private var systemTouches = false
+
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val segPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC)
@@ -133,6 +139,10 @@ class DrawingView(context: Context) : View(context) {
                 touching = true
                 touchX = e.x
                 touchY = e.y
+                systemTouches = try {
+                    android.provider.Settings.System.getInt(context.contentResolver, "show_touches", 0) == 1
+                } catch (_: Exception) { false }
+                onStrokeStart?.invoke()
                 when (val tool = Prefs.lastTool) {
                     Tool.ERASER -> eraseAt(e.x, e.y)
                     Tool.TEXT -> onTextRequest?.invoke(e.x, e.y)
@@ -315,7 +325,7 @@ class DrawingView(context: Context) : View(context) {
                 else -> drawFreehand(canvas, s, wholeFactor(s, now, hold, fade))
             }
         }
-        if (touching && Prefs.showTouches) drawTouch(canvas)
+        if (touching && Prefs.showTouches && !systemTouches) drawTouch(canvas)
         if (animate) postInvalidateOnAnimation()
     }
 

@@ -88,6 +88,11 @@ object Prefs {
         get() = sp.getInt("toolbarCorner", 1)
         set(v) = sp.edit().putInt("toolbarCorner", v).apply()
 
+    /** true = la barra si chiude da sola e diventa invisibile (cosi' non finisce nel video) */
+    var hideBar: Boolean
+        get() = sp.getBoolean("hideBar", true)
+        set(v) = sp.edit().putBoolean("hideBar", v).apply()
+
     /** Scala della barra in percentuale 70..150 */
     var toolbarScale: Int
         get() = sp.getInt("toolbarScale", 100)

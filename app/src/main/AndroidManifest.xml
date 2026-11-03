@@ -37,12 +37,6 @@
             android:exported="false"
             android:label="@string/settings" />
 
-        <activity
-            android:name=".TextInputActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:theme="@style/Theme.ScreenAnnotator.Dialog" />
-
         <service
             android:name=".RecorderService"
             android:exported="false"

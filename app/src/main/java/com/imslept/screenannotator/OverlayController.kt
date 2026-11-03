@@ -5,7 +5,6 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
-import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -18,9 +17,11 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.text.InputType
 import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -28,6 +29,9 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -48,6 +52,7 @@ import kotlin.math.min
 class OverlayController(
     private val ctx: Context,
     private val onStopRequested: () -> Unit,
+    private val onDrawingChanged: (Boolean) -> Unit = {},
 ) {
     private companion object {
         const val ORANGE = 0xFFD97757.toInt()
@@ -62,6 +67,11 @@ class OverlayController(
         const val PANEL_W = 252f
         const val EST_PANEL_H = 480f
         const val BUBBLE = 58f
+
+        /** Zona invisibile al bordo dello schermo che riapre la barra (dp reali, non scalati). */
+        const val GHOST_W = 34f
+        const val GHOST_H = 150f
+        const val HIDE_DELAY = 4000L
 
         /**
          * Da Android 12 i tocchi attraverso un overlay "non toccabile" passano solo se l'opacita'
@@ -92,6 +102,7 @@ class OverlayController(
     private lateinit var bubble: FrameLayout
     private lateinit var bubbleDisc: ImageView
     private lateinit var bubbleDot: View
+    private lateinit var ghost: View
 
     private lateinit var headerDot: View
     private lateinit var timerText: TextView
@@ -127,11 +138,18 @@ class OverlayController(
     private var dockedLeft = false
     private var peeking = false
     private var pendingText: PointF? = null
+    private var textWindow: View? = null
     private var shown = false
+
+    /** Barra invisibile nel video: si chiude da sola e al suo posto resta una zona trasparente al bordo. */
+    private val ghostMode = Prefs.hideBar
 
     val isDrawing: Boolean get() = drawing
 
     private fun dp(v: Float): Int = (v * u).toInt()
+
+    /** Misura in pixel senza la scala della barra (per elementi che non devono ridimensionarsi). */
+    private fun px(v: Float): Int = (v * density).toInt()
 
     private fun screenSize(): Pair<Int, Int> {
         return if (Build.VERSION.SDK_INT >= 30) {
@@ -150,6 +168,7 @@ class OverlayController(
     fun show() {
         if (shown) return
         shown = true
+        expanded = !ghostMode
         // Se la barra non entra nello schermo (scala alta) la riduco automaticamente
         val (_, sh) = screenSize()
         val maxH = sh * 0.9f
@@ -159,6 +178,10 @@ class OverlayController(
         buildToolbar()
         addToolbarWindow()
         drawingView.onTextRequest = { x, y -> requestText(x, y) }
+        drawingView.onStrokeStart = {
+            // appena inizi a disegnare la barra aperta si richiude presto
+            if (ghostMode && expanded && !panelOpen) scheduleAutoHide(1200)
+        }
         setDrawing(false)
         selectTool(Prefs.lastTool, enableDrawing = false)
 
@@ -169,6 +192,13 @@ class OverlayController(
 
         root.alpha = 0f
         root.animate().alpha(1f).setDuration(240).start()
+        scheduleAutoHide()
+    }
+
+    /** Apre/chiude la barra (usato dal pulsante «Barra» della notifica). */
+    fun toggleBar() {
+        if (!shown) return
+        setExpanded(!expanded)
     }
 
     fun destroy() {
@@ -177,7 +207,7 @@ class OverlayController(
         handler.removeCallbacksAndMessages(null)
         for (a in anims) a.cancel()
         anims.clear()
-        OverlayBridge.textListener = null
+        closeText(null)
         try { root.animate().cancel() } catch (_: Exception) {}
         try { wm.removeView(root) } catch (_: Exception) {}
         try { wm.removeView(drawingView) } catch (_: Exception) {}
@@ -252,19 +282,153 @@ class OverlayController(
             bubbleDisc.imageTintList = ColorStateList.valueOf(if (on) INK else PRIMARY)
             bubbleDisc.background = circle(if (on) ORANGE else 0xF2262624.toInt())
         }
+        onDrawingChanged(on)
     }
 
-    private fun requestText(x: Float, y: Float) {
-        pendingText = PointF(x, y)
-        OverlayBridge.textListener = { text ->
-            val p = pendingText
-            if (text != null && p != null) drawingView.addText(p.x, p.y, text)
-            pendingText = null
-            OverlayBridge.textListener = null
+    // ------------------------------------------------------------------ Inserimento testo
+
+    private fun roundPx(color: Int, radiusDp: Float): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = px(radiusDp).toFloat()
         }
-        ctx.startActivity(
-            Intent(ctx, TextInputActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
+
+    /**
+     * Pannello per scrivere il testo, mostrato come finestra sovrapposta (nessuna activity):
+     * cosi' l'app che stai registrando resta dov'e' e la tastiera si apre subito.
+     */
+    private fun requestText(x: Float, y: Float) {
+        if (textWindow != null || !shown) return
+        pendingText = PointF(x, y)
+
+        val input = EditText(ctx).apply {
+            hint = ctx.getString(R.string.text_dialog_hint)
+            setHintTextColor(MUTED)
+            setTextColor(PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18f)
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
+            minLines = 1
+            maxLines = 4
+            highlightColor = 0x66D97757
+            background = roundPx(0x1FFFFFFF, 14f)
+            setPadding(px(14f), px(12f), px(14f), px(12f))
+            textCursorDrawable = GradientDrawable().apply {
+                setColor(ORANGE)
+                setSize(px(2f), px(24f))
+            }
+        }
+
+        fun button(label: String, filled: Boolean, onClick: () -> Unit) = TextView(ctx).apply {
+            text = label
+            gravity = Gravity.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+            setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15f)
+            setTextColor(if (filled) INK else PRIMARY)
+            background = roundPx(if (filled) ORANGE else 0x26FFFFFF, 14f)
+            layoutParams = LinearLayout.LayoutParams(0, px(48f), 1f).apply {
+                if (filled) marginStart = px(10f)
+            }
+            setOnClickListener { onClick() }
+        }
+
+        val titleView = TextView(ctx).apply {
+            text = ctx.getString(R.string.text_dialog_title)
+            setTextColor(PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18f)
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        val hintLine = TextView(ctx).apply {
+            text = "Il testo comparirà dove hai toccato lo schermo."
+            setTextColor(MUTED)
+            setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12.5f)
+        }
+        val buttons = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(button(ctx.getString(R.string.cancel), filled = false) { closeText(null) })
+            addView(button("Aggiungi", filled = true) { closeText(input.text.toString()) })
+        }
+        val card = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xFA292927.toInt(), 0xFA151514.toInt())
+            ).apply {
+                cornerRadius = px(24f).toFloat()
+                setStroke(px(1f).coerceAtLeast(1), 0x33FFFFFF)
+            }
+            setPadding(px(18f), px(16f), px(18f), px(18f))
+            isClickable = true // i tocchi sulla scheda non devono arrivare allo sfondo
+            addView(titleView)
+            addView(hintLine, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(2f) })
+            addView(input, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(12f) })
+            addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(14f) })
+        }
+
+        val scrim = object : FrameLayout(ctx) {
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+                if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                    if (event.action == KeyEvent.ACTION_UP) closeText(null)
+                    return true
+                }
+                return super.dispatchKeyEvent(event)
+            }
+        }.apply {
+            setBackgroundColor(0x40000000)
+            // un tocco fuori dalla scheda conferma il testo (o annulla se e' vuoto)
+            setOnClickListener {
+                val t = input.text.toString()
+                closeText(if (t.isBlank()) null else t)
+            }
+            addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply {
+                setMargins(px(16f), px(72f), px(16f), 0)
+            })
+        }
+
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            title = "ScreenAnnotator-text"
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+        }
+        try {
+            wm.addView(scrim, lp)
+        } catch (_: Exception) {
+            pendingText = null
+            return
+        }
+        textWindow = scrim
+        input.post {
+            input.requestFocus()
+            val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    /** Chiude il pannello del testo; se `text` non e' vuoto lo aggiunge dove l'utente aveva toccato. */
+    private fun closeText(text: String?) {
+        val w = textWindow ?: return
+        textWindow = null
+        try {
+            val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.hideSoftInputFromWindow(w.windowToken, 0)
+        } catch (_: Exception) {}
+        try { wm.removeView(w) } catch (_: Exception) {}
+        val p = pendingText
+        pendingText = null
+        if (shown && text != null && p != null && text.isNotBlank()) {
+            drawingView.addText(p.x, p.y, text.trim())
+        }
+        scheduleAutoHide()
     }
 
     // ------------------------------------------------------------------ Elementi grafici
@@ -512,7 +676,19 @@ class OverlayController(
         }
         attachDrag(bubble, onClick = { setExpanded(true) }, onDrop = { snapBubble() })
 
-        root = LinearLayout(ctx).apply {
+        // --- zona invisibile (barra nascosta): trasparente, quindi non compare nel video
+        ghost = View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(px(GHOST_W), px(GHOST_H))
+            contentDescription = "Apri la barra degli strumenti"
+            setOnClickListener { setExpanded(true) }
+        }
+
+        root = object : LinearLayout(ctx) {
+            override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+                if (ev.actionMasked == MotionEvent.ACTION_DOWN) onBarTouched()
+                return super.dispatchTouchEvent(ev)
+            }
+        }.apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.TOP
         }
@@ -784,7 +960,7 @@ class OverlayController(
     private fun layoutRoot() {
         root.removeAllViews()
         if (!expanded) {
-            root.addView(bubble)
+            root.addView(if (ghostMode) ghost else bubble)
             return
         }
         val gap = dp(8f)
@@ -828,6 +1004,7 @@ class OverlayController(
     private fun setExpanded(value: Boolean) {
         if (!value && panelOpen) togglePanel()
         handler.removeCallbacks(peekRun)
+        handler.removeCallbacks(autoHideRun)
         peeking = false
         root.animate().cancel()
         root.animate().alpha(0f).scaleX(0.8f).scaleY(0.8f).setDuration(100).withEndAction {
@@ -839,6 +1016,14 @@ class OverlayController(
                 barParams.x = if (dockedLeft) margin else sw - dp(BAR_W) - margin
                 val maxY = max(dp(24f), sh - dp(EST_BAR_H) - dp(24f))
                 barParams.y = barParams.y.coerceIn(dp(24f), maxY)
+            } else if (ghostMode) {
+                expanded = false
+                val gw = px(GHOST_W)
+                val gh = px(GHOST_H)
+                dockedLeft = barParams.x + dp(BAR_W) / 2 < sw / 2
+                barParams.x = if (dockedLeft) 0 else sw - gw
+                val minY = px(40f)
+                barParams.y = (barParams.y + dp(60f)).coerceIn(minY, max(minY, sh - gh - minY))
             } else {
                 expanded = false
                 val size = dp(BUBBLE)
@@ -851,7 +1036,7 @@ class OverlayController(
             root.scaleY = 0.8f
             root.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(170)
                 .setInterpolator(OvershootInterpolator(1.1f))
-                .withEndAction { if (!expanded) schedulePeek() }
+                .withEndAction { if (expanded) scheduleAutoHide() else if (!ghostMode) schedulePeek() }
                 .start()
         }.start()
     }
@@ -863,8 +1048,13 @@ class OverlayController(
         val barH = dp(EST_BAR_H)
         val corner = Prefs.toolbarCorner
         dockedLeft = !(corner == 1 || corner == 3)
-        val x = if (dockedLeft) margin else sw - barW - margin
-        val y = if (corner >= 2) max(margin, sh - barH - dp(60f)) else dp(60f)
+        var x = if (dockedLeft) margin else sw - barW - margin
+        var y = if (corner >= 2) max(margin, sh - barH - dp(60f)) else dp(60f)
+        if (!expanded) {
+            // barra nascosta: parto subito dalla zona invisibile sul bordo
+            x = if (dockedLeft) 0 else sw - px(GHOST_W)
+            y = if (corner >= 2) sh - px(GHOST_H) - px(160f) else px(120f)
+        }
         barParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -884,6 +1074,27 @@ class OverlayController(
     }
 
     // ------------------------------------------------------------------ Bolla: aggancio al bordo e "sbirciata"
+
+    // ------------------------------------------------------------------ Barra che si nasconde da sola
+
+    private val autoHideRun = Runnable {
+        if (!shown || !expanded) return@Runnable
+        if (textWindow != null) {
+            scheduleAutoHide()
+            return@Runnable
+        }
+        setExpanded(false)
+    }
+
+    /** Con la barra «invisibile nel video» la richiudo dopo un po' che non la usi. */
+    private fun scheduleAutoHide(ms: Long = HIDE_DELAY) {
+        handler.removeCallbacks(autoHideRun)
+        if (ghostMode && expanded && shown) handler.postDelayed(autoHideRun, ms)
+    }
+
+    private fun onBarTouched() {
+        if (expanded) scheduleAutoHide(if (panelOpen) 10_000L else HIDE_DELAY)
+    }
 
     private val peekRun = Runnable {
         if (!shown || expanded) return@Runnable

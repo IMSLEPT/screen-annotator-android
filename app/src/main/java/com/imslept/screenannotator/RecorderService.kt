@@ -26,6 +26,7 @@ class RecorderService : Service() {
         const val ACTION_START = "com.imslept.screenannotator.START"
         const val ACTION_STOP = "com.imslept.screenannotator.STOP"
         const val ACTION_TOGGLE_DRAW = "com.imslept.screenannotator.TOGGLE_DRAW"
+        const val ACTION_TOGGLE_BAR = "com.imslept.screenannotator.TOGGLE_BAR"
         private const val EXTRA_CODE = "code"
         private const val EXTRA_DATA = "data"
         private const val CHANNEL_ID = "recording"
@@ -58,6 +59,7 @@ class RecorderService : Service() {
     private var overlay: OverlayController? = null
     private var stopping = false
     private var previousShowTouches = -1
+    private var startedAt = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -66,6 +68,7 @@ class RecorderService : Service() {
             ACTION_START -> startRecording(intent)
             ACTION_STOP -> stopRecording()
             ACTION_TOGGLE_DRAW -> overlay?.toggleDrawing()
+            ACTION_TOGGLE_BAR -> overlay?.toggleBar()
             else -> if (!recording) stopSelf()
         }
         return START_NOT_STICKY
@@ -81,6 +84,7 @@ class RecorderService : Service() {
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         if (mic) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        startedAt = System.currentTimeMillis()
         startForeground(NOTIF_ID, buildNotification(), type)
 
         val code = intent.getIntExtra(EXTRA_CODE, 0)
@@ -109,7 +113,12 @@ class RecorderService : Service() {
             setShowTouches(Prefs.showTouches)
 
             if (Settings.canDrawOverlays(this)) {
-                overlay = OverlayController(this) { stopRecording() }.also { it.show() }
+                overlay = OverlayController(
+                    this,
+                    onStopRequested = { stopRecording() },
+                    onDrawingChanged = { main.post { refreshNotification() } },
+                ).also { it.show() }
+                refreshNotification()
             } else {
                 Toast.makeText(this, R.string.perm_overlay_body, Toast.LENGTH_LONG).show()
             }
@@ -220,6 +229,14 @@ class RecorderService : Service() {
 
     // ------------------------------------------------------------------ Notifica
 
+    private fun refreshNotification() {
+        if (stopping || (!recording && overlay == null)) return
+        try {
+            getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification())
+        } catch (_: Exception) {
+        }
+    }
+
     private fun buildNotification(): Notification {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
@@ -227,22 +244,32 @@ class RecorderService : Service() {
         )
         val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), flags)
-        val stop = PendingIntent.getService(
-            this, 1, Intent(this, RecorderService::class.java).setAction(ACTION_STOP), flags
+        fun action(code: Int, name: String) = PendingIntent.getService(
+            this, code, Intent(this, RecorderService::class.java).setAction(name), flags
         )
-        val draw = PendingIntent.getService(
-            this, 2, Intent(this, RecorderService::class.java).setAction(ACTION_TOGGLE_DRAW), flags
-        )
-        return Notification.Builder(this, CHANNEL_ID)
+        val drawing = overlay?.isDrawing == true
+        val side = if (Prefs.toolbarCorner % 2 == 1) "destro" else "sinistro"
+        val status = buildString {
+            append(if (drawing) "Disegno attivo" else "Tocco attivo")
+            if (Prefs.hideBar) append(" · barra nascosta: tocca il bordo $side dello schermo")
+        }
+        val b = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.recording_in_progress))
+            .setContentText(status)
+            .setStyle(Notification.BigTextStyle().bigText(status))
             .setContentIntent(open)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
             .setUsesChronometer(true)
-            .setWhen(System.currentTimeMillis())
+            .setWhen(if (startedAt > 0) startedAt else System.currentTimeMillis())
             .setColor(0xFFD97757.toInt())
-            .addAction(Notification.Action.Builder(null, getString(R.string.notif_draw), draw).build())
-            .addAction(Notification.Action.Builder(null, getString(R.string.notif_stop), stop).build())
-            .build()
+        if (overlay != null) {
+            // l'azione dice cosa succede premendola: se sto disegnando, torno al tocco
+            b.addAction(Notification.Action.Builder(null, if (drawing) "Tocco" else "Disegno", action(2, ACTION_TOGGLE_DRAW)).build())
+            b.addAction(Notification.Action.Builder(null, "Barra", action(3, ACTION_TOGGLE_BAR)).build())
+        }
+        b.addAction(Notification.Action.Builder(null, getString(R.string.notif_stop), action(1, ACTION_STOP)).build())
+        return b.build()
     }
 }

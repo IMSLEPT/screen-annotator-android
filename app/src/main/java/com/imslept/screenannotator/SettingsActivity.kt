@@ -110,7 +110,7 @@ class SettingsActivity : AppCompatActivity() {
             ui.lp(16)
         )
         card.addView(
-            ui.switchRow("Mostra i tocchi", "Un cerchio sotto il dito mentre disegni", Prefs.showTouches) {
+            ui.switchRow("Mostra i tocchi", "Un cerchio sotto il dito, anche senza disegnare", Prefs.showTouches) {
                 Prefs.showTouches = it
             },
             ui.lp(18)
@@ -233,14 +233,22 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun buildToolbar() {
         val card = section(R.drawable.ic_overlay, "Barra flottante", "Dove compare mentre registri")
+        card.addView(
+            ui.switchRow(
+                "Nascondi la barra dal video",
+                "Si chiude da sola e diventa invisibile. Per riaprirla tocca il bordo dello schermo o «Barra» nella notifica.",
+                Prefs.hideBar
+            ) { Prefs.hideBar = it },
+            ui.lp(16)
+        )
         card.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(CornerPicker(context, Prefs.toolbarCorner) { Prefs.toolbarCorner = it })
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                addView(ui.text("Posizione iniziale", 16f, bold = true))
-                addView(ui.text("Tocca l'angolo del telefono dove vuoi la barra.", 13f, R.color.ink_muted), ui.lp(4))
+                addView(ui.text("Posizione", 16f, bold = true))
+                addView(ui.text("Tocca l'angolo del telefono dove vuoi la barra (e dove tocchi per riaprirla se è nascosta).", 13f, R.color.ink_muted), ui.lp(4))
                 addView(
                     ui.text("Durante la registrazione puoi trascinarla ovunque o ridurla a una bolla.", 13f, R.color.ink_muted),
                     ui.lp(10)

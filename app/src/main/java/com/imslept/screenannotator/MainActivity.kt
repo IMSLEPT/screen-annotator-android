@@ -58,6 +58,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var micDone: View
     private lateinit var micAction: View
     private lateinit var secureNote: View
+    private lateinit var secureNoteText: TextView
+    private lateinit var secureButtons: View
     private var pulse: ObjectAnimator? = null
 
     private val stateListener: () -> Unit = { runOnUiThread { refresh() } }
@@ -269,14 +271,21 @@ class MainActivity : AppCompatActivity() {
             Tile(intArrayOf(R.drawable.ic_speaker), "Dispositivo", 2),
             Tile(intArrayOf(R.drawable.ic_mic, R.drawable.ic_speaker), "Entrambi", 3),
         )
-        secureNote = LinearLayout(this).apply {
+        val noteView = ui.note("")
+        secureNoteText = noteView.getChildAt(1) as TextView
+        secureButtons = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(ui.note("Per mostrare anche i tocchi di sistema serve un permesso da dare una volta dal computer."))
-            addView(ui.button("Copia il comando", filled = false, iconRes = R.drawable.ic_copy) {
+            addView(ui.button("Apri Opzioni sviluppatore", filled = true) { openDeveloperOptions() }, ui.lp(10))
+            addView(ui.button("Copia il comando per il computer", filled = false, iconRes = R.drawable.ic_copy) {
                 val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(ClipData.newPlainText("adb", ADB_COMMAND))
                 Toast.makeText(this@MainActivity, "Comando copiato", Toast.LENGTH_SHORT).show()
-            }, ui.lp(10, w = ViewGroup.LayoutParams.WRAP_CONTENT))
+            }, ui.lp(8))
+        }
+        secureNote = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(noteView)
+            addView(secureButtons)
         }
         column.addView(
             ui.card(
@@ -286,8 +295,9 @@ class MainActivity : AppCompatActivity() {
                     refresh()
                 }.apply { layoutParams = ui.lp(16) },
                 ui.divider(16),
-                ui.switchRow("Mostra i tocchi", "Un cerchio sotto il dito mentre disegni", Prefs.showTouches) {
+                ui.switchRow("Mostra i tocchi", "Un cerchio sotto il dito, anche senza disegnare", Prefs.showTouches) {
                     Prefs.showTouches = it
+                    refresh()
                 }.apply { layoutParams = ui.lp(14) },
                 secureNote.apply { layoutParams = ui.lp(12) },
             ),
@@ -300,7 +310,7 @@ class MainActivity : AppCompatActivity() {
                 ui.sectionHeader(R.drawable.ic_info, "Come funziona", "Quattro passi"),
                 stepRow(1, "Tocca il cerchio e scegli «Intero schermo» nella finestra di sistema.")
                     .apply { layoutParams = ui.lp(16) },
-                stepRow(2, "Apri qualsiasi app: la barra a lato ti fa disegnare, scrivere e cerchiare.")
+                stepRow(2, "Apri qualsiasi app. La barra è invisibile nel video: per aprirla tocca il bordo dello schermo dal lato scelto (o «Barra» nella notifica).")
                     .apply { layoutParams = ui.lp(14) },
                 stepRow(3, "Temporanei: il tratto svanisce da solo. Permanenti: restano finché non li cancelli.")
                     .apply { layoutParams = ui.lp(14) },
@@ -437,7 +447,29 @@ class MainActivity : AppCompatActivity() {
         micDone.visibility = if (micOk) View.VISIBLE else View.GONE
         micAction.visibility = if (showMic) View.VISIBLE else View.GONE
         setupCard.visibility = if (overlayOk && !showMic) View.GONE else View.VISIBLE
-        secureNote.visibility = if (secureOk) View.GONE else View.VISIBLE
+        // Tocchi nel video: il sistema li disegna solo se "Mostra tocchi" e' attivo
+        val systemTouches = try { Settings.System.getInt(contentResolver, "show_touches", 0) == 1 } catch (_: Exception) { false }
+        secureNote.visibility = if (Prefs.showTouches && !secureOk) View.VISIBLE else View.GONE
+        secureButtons.visibility = if (systemTouches) View.GONE else View.VISIBLE
+        secureNoteText.text = if (systemTouches) {
+            "«Mostra tocchi» di Android è attivo: i cerchi compariranno nel video."
+        } else {
+            "Android disegna i cerchi nel video solo se «Mostra tocchi» è attivo nelle Opzioni sviluppatore. " +
+                "Attivalo lì prima di registrare (pulsante qui sotto). Se invece dai all'app un permesso, una sola volta, dal computer, lo accende e lo spegne da sola."
+        }
+    }
+
+    private fun openDeveloperOptions() {
+        try {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+        } catch (_: Exception) {
+            Toast.makeText(
+                this,
+                "Opzioni sviluppatore spente: in Info telefono tocca 7 volte «Numero build»",
+                Toast.LENGTH_LONG
+            ).show()
+            try { startActivity(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)) } catch (_: Exception) {}
+        }
     }
 
     // ------------------------------------------------------------------ Avvio registrazione
